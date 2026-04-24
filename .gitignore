@@ -7,3 +7,6 @@ dist/
 build/
 .ruff_cache/
 .DS_Store
+
+# Real secrets for local infra stacks. Only .env.example is tracked.
+infra/**/.env
