@@ -305,7 +305,8 @@ def _cli(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         return 0
 
-    _export(all_spans, args.endpoint)
+    from agent_telemetry.backfill.otlp import export_spans_via_otlp
+    export_spans_via_otlp(all_spans, args.endpoint, source="claude-code")
     return 0
 
 
@@ -315,30 +316,6 @@ def _expand_path(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
     return []
-
-
-def _export(span_dicts: list[Span], endpoint: str) -> None:
-    # Imports are deferred so `--dry-run` stays pure-Python.
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-        OTLPSpanExporter,
-    )
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-    from agent_telemetry.backfill.otlp import export_span_dicts
-
-    resource = Resource.create(
-        {
-            "service.name": "agent-telemetry-backfill",
-            "source": "claude-code",
-        }
-    )
-    exporter = OTLPSpanExporter(endpoint=endpoint)
-    processor = BatchSpanProcessor(exporter)
-    try:
-        export_span_dicts(span_dicts, resource, processor)
-    finally:
-        processor.shutdown()
 
 
 if __name__ == "__main__":  # pragma: no cover

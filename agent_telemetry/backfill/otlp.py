@@ -23,6 +23,38 @@ Span = dict[str, Any]
 _SAMPLED = TraceFlags(0x01)
 
 
+def export_spans_via_otlp(
+    span_dicts: list[Span],
+    endpoint: str,
+    source: str,
+) -> None:
+    """Send span-dicts to an OTLP-HTTP traces endpoint.
+
+    Shared across the per-source backfill CLIs (INT-432 Claude Code,
+    INT-433 Codex, and whatever lands next). Each mapper already tags its
+    spans with a `source` attribute; that same value is mirrored into the
+    Resource here so Langfuse can split by source without reading every span.
+    """
+    # Imports deferred so CLI `--dry-run` paths stay pure-Python.
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    resource = Resource.create(
+        {
+            "service.name": "agent-telemetry-backfill",
+            "source": source,
+        }
+    )
+    exporter = OTLPSpanExporter(endpoint=endpoint)
+    processor = BatchSpanProcessor(exporter)
+    try:
+        export_span_dicts(span_dicts, resource, processor)
+    finally:
+        processor.shutdown()
+
+
 def export_span_dicts(
     span_dicts: list[Span],
     resource: Resource,
