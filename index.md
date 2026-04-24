@@ -18,8 +18,10 @@ The confidence check: recomputing every metric from `analyze_sessions.py` agains
 ## Layout
 
 - `agent_telemetry/backfill/` — parsers that turn historical session files into OTel spans.
-- `agent_telemetry/live/` — collector config + per-source env/config recipes. *(not yet)*
-- `agent_telemetry/analysis/` — parity check + reproductions of the `analyze_sessions.py` metrics against Langfuse. *(not yet)*
+- `agent_telemetry/live/` — per-source env/config recipes for live agents. *(not yet)*
+- `agent_telemetry/analysis/` — parity check + reproductions of the `analyze_sessions.py` metrics against Langfuse.
+- `infra/langfuse/` — local self-hosted Langfuse v3 stack (docker-compose).
+- `infra/collector/` — local OTel Collector (docker-compose). Single fan-in point on `http://localhost:4318` for backfill + live recipes; forwards to Langfuse with auth.
 - `tests/` — mapping tests with small JSONL fixtures.
 
 ## Status

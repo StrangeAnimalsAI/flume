@@ -1,0 +1,127 @@
+# OpenTelemetry Collector config — local fan-in for agent-telemetry (INT-435).
+#
+# Shape: receivers (OTLP gRPC + HTTP on 4317/4318) → memory_limiter →
+# resource/enrich → transform/pii (no-op today) → batch → otlphttp/langfuse.
+#
+# Env-var dependencies (set in .env, loaded by docker-compose):
+#   LANGFUSE_BASIC_AUTH  — `Basic <base64(pk:sk)>` value for the Authorization
+#                          header on the Langfuse OTLP endpoint. Required.
+#   HOST_NAME            — value written to the `host.name` resource attribute.
+#                          Required; no default so we never mis-label a host.
+#   LANGFUSE_OTLP_ENDPOINT — base URL of the Langfuse OTLP v1 endpoint (no
+#                            trailing /v1/traces). Defaults to the host-gateway
+#                            URL that works from a Docker container on macOS.
+#
+# The Collector is deliberately minimal: it fans live agent traffic (future
+# INT-437/INT-438) and backfill CLI traffic into one pipe, tags universal
+# resource attrs, and forwards to Langfuse. Sender-set attributes are
+# preserved verbatim — no overwrite.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        # Keep CORS scoped to localhost. Browser clients aren't expected today,
+        # but the OTLP HTTP receiver defaults to no CORS at all, which blocks
+        # any future browser-based sender. Allow-list localhost explicitly
+        # rather than wildcarding.
+        cors:
+          allowed_origins:
+            - http://localhost
+            - http://localhost:*
+            - http://127.0.0.1
+            - http://127.0.0.1:*
+
+processors:
+  # Must be first in the pipeline. Refuses new data when RSS approaches the
+  # limit; prevents the Collector from OOM-killing itself and dragging down
+  # the host when a sender floods it.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Universal resource attrs. `upsert` vs `insert` matters here:
+  #   - host.name, service.instance.id: `insert` so we NEVER clobber a sender
+  #     that already set them. A live agent that self-identifies wins.
+  #   - deployment.environment, telemetry.collector.name: `upsert` because
+  #     those describe the collector, not the sender.
+  # `source` is NOT touched — senders like the backfill CLI already set
+  # source=claude-code|codex, and the live recipes will set
+  # source=claude-code-cli etc. Preserving it is load-bearing for cross-
+  # source analysis.
+  resource/enrich:
+    attributes:
+      - key: host.name
+        value: ${env:HOST_NAME}
+        action: insert
+      - key: service.instance.id
+        # Collector fills a stable default when the sender didn't tag one.
+        # Using the host name keeps it deterministic per machine without
+        # leaking a random UUID into every replay.
+        value: ${env:HOST_NAME}
+        action: insert
+      - key: deployment.environment
+        value: local
+        action: upsert
+      - key: telemetry.collector.name
+        value: agent-telemetry-collector
+        action: upsert
+
+  # PII-scrub hook. Intentionally a no-op today — the placeholder statement
+  # keeps the processor valid and the pipeline wired, so adding real
+  # redactions later is a one-line edit. Examples of what would live here:
+  #   - replace_pattern(attributes["tool.arguments"], "(?i)api[_-]?key=\\S+", "[REDACTED]")
+  #   - delete_key(attributes, "user.email") on traces from untrusted sources
+  transform/pii:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # No-op: set an attribute to its own value if present. Safe even
+          # when the key is absent because error_mode=ignore swallows the
+          # read-before-set. Replace this block with real redactions when a
+          # PII scrub lands.
+          - set(attributes["telemetry.pii_scrub.version"], "0")
+
+  # Batch last. 5s / 8192 spans is the OTel default shape; tuned down from
+  # the exporter-side batching the backfill CLI does today so live senders
+  # don't see a per-request tail.
+  batch:
+    timeout: 5s
+    send_batch_size: 8192
+    send_batch_max_size: 8192
+
+exporters:
+  otlphttp/langfuse:
+    # Langfuse's OTLP ingest sits under /api/public/otel. The SDK appends
+    # `/v1/traces` to `endpoint`, so we point at the base path.
+    endpoint: ${env:LANGFUSE_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:LANGFUSE_BASIC_AUTH}
+    # Langfuse accepts protobuf; explicit for reproducibility.
+    encoding: proto
+    # Retry loosely — this is dev, not production. Drop after a minute of
+    # failures rather than piling up unbounded queues.
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 60s
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 1000
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/enrich, transform/pii, batch]
+      exporters: [otlphttp/langfuse]

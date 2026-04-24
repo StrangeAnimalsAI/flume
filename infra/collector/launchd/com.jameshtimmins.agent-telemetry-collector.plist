@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent for the agent-telemetry OTel Collector.
+
+  Loads the docker-compose stack at login. The collector itself runs under
+  Docker; this plist just ensures `docker compose up -d` happens once per
+  login so the endpoint is always reachable on localhost:4318.
+
+  Installation (manual step — do NOT auto-load):
+
+    cp infra/collector/launchd/com.jameshtimmins.agent-telemetry-collector.plist \
+       ~/Library/LaunchAgents/
+    launchctl load -w \
+       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
+
+  Stop / unload:
+
+    launchctl unload \
+       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
+
+  WorkingDirectory is hard-coded to the repo's worktree path. If you move the
+  checkout, rewrite that path and reload. Keeping it explicit beats a
+  ${HOME}/Code/... placeholder we'd have to remember to keep in sync.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jameshtimmins.agent-telemetry-collector</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>/usr/local/bin/docker compose -f infra/collector/docker-compose.yml up -d</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/james/Code/tools/agent-telemetry</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Docker CLI on macOS lives under /usr/local/bin (Intel) or
+             /opt/homebrew/bin (Apple Silicon). Adding both keeps the plist
+             portable between machines. -->
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Fire once at login, not on a schedule. Docker Desktop must be
+         running; if it isn't, the agent will fail silently until the user
+         starts Docker, then re-running launchctl kickstart brings it back. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/agent-telemetry-collector.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/agent-telemetry-collector.stderr.log</string>
+</dict>
+</plist>

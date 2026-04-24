@@ -1,0 +1,37 @@
+# OpenTelemetry Collector — local fan-in for agent-telemetry (INT-435).
+#
+# Symmetric with infra/langfuse/docker-compose.yml. Runs under its own compose
+# project so starting/stopping the collector doesn't tug at the Langfuse stack.
+#
+# The Collector reaches Langfuse via the host gateway — not via the Langfuse
+# compose network — so this file stays self-contained. On macOS and recent
+# Docker Desktop, `host.docker.internal` resolves to the host; the
+# extra_hosts: host-gateway line makes it work on Linux too.
+#
+# Real secrets live in .env (gitignored repo-wide). .env.example ships with
+# placeholders.
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    restart: unless-stopped
+    # Explicit config path. The `-contrib` image ships a default config that
+    # we deliberately override.
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      HOST_NAME: ${HOST_NAME:?HOST_NAME must be set in .env}
+      LANGFUSE_BASIC_AUTH: ${LANGFUSE_BASIC_AUTH:?LANGFUSE_BASIC_AUTH must be set in .env}
+      LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:-http://host.docker.internal:3000/api/public/otel}
+    volumes:
+      - ./config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      # 4317 gRPC, 4318 HTTP. Bind to localhost only — this collector is
+      # never meant to accept traffic from the network.
+      - 127.0.0.1:4317:4317
+      - 127.0.0.1:4318:4318
+      # 13133 is the health_check extension if we wire it later. Not exposed
+      # today.
+    extra_hosts:
+      # Linux: make host.docker.internal resolve to the host gateway. On
+      # macOS/Windows Docker Desktop this is already a no-op builtin.
+      - "host.docker.internal:host-gateway"
