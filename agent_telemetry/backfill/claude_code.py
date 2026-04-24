@@ -35,8 +35,23 @@ def jsonl_to_spans(path: Path) -> list[Span]:
     entrypoint: str | None = None
     version: str | None = None
     git_branch: str | None = None
-    pending_duration_ms = 0
     tool_pending: dict[str, dict[str, Any]] = {}
+    # Track the last-emitted assistant turn span so a `turn_duration` event
+    # that follows a cluster of assistant events can retro-attribute its ms
+    # to that turn. The native Claude Code logger emits turn_duration AFTER
+    # the assistant turn it measures (messageCount references the trailing
+    # event count), so forward-attribution (the prior mapper behavior) loses
+    # the final turn's duration when the session ends on a user/system tail.
+    last_turn: Span | None = None
+
+    def _apply_turn_duration(duration_ms: int) -> None:
+        if duration_ms <= 0 or last_turn is None:
+            return
+        last_turn["attributes"]["claude_code.duration_ms"] = duration_ms
+        # Preserve end_unix_nano; shift start backwards by duration.
+        last_turn["start_unix_nano"] = (
+            last_turn["end_unix_nano"] - duration_ms * 1_000_000
+        )
 
     for ev in events:
         ts_ns = _ts_ns(ev.get("timestamp"))
@@ -50,15 +65,13 @@ def jsonl_to_spans(path: Path) -> list[Span]:
 
         t = ev.get("type")
         if t == "system" and ev.get("subtype") == "turn_duration":
-            pending_duration_ms = ev.get("durationMs") or 0
+            _apply_turn_duration(int(ev.get("durationMs") or 0))
             continue
         if t == "assistant" and ts_ns is not None:
-            turn = _turn_span(
-                ev, ts_ns, session_id, trace_id, root_span_id, pending_duration_ms
-            )
+            turn = _turn_span(ev, ts_ns, session_id, trace_id, root_span_id, 0)
             spans.append(turn)
+            last_turn = turn
             _register_tool_uses(ev, ts_ns, turn["span_id"], tool_pending)
-            pending_duration_ms = 0
             continue
         if t == "user" and ts_ns is not None:
             spans.extend(
@@ -107,7 +120,14 @@ def _ts_ns(ts: str | None) -> int | None:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
-    return int(dt.timestamp() * 1e9)
+    # Integer microsecond path — float `dt.timestamp() * 1e9` drops sub-ms
+    # precision (e.g. .827 → .826999808), which then round-trips through
+    # ClickHouse as a visible 1 ms drift. Using Unix epoch seconds as an int
+    # plus the microsecond remainder keeps the value exact to the microsecond.
+    from datetime import timezone
+    epoch_utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    delta = dt - epoch_utc
+    return delta.days * 86_400_000_000_000 + delta.seconds * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def _trace_id(session_id: str) -> str:

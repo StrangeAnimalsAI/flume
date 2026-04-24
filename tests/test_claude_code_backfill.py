@@ -18,14 +18,10 @@ def _write_jsonl(path: Path, events: list[dict]) -> None:
 
 
 def _fixture_events() -> list[dict]:
+    # Mirrors the real Claude Code JSONL ordering: `turn_duration` emits AFTER
+    # the assistant turn it measures (parity check INT-436 caught the
+    # opposite-order assumption previously encoded here).
     return [
-        # Assistant turn with one tool_use, preceded by a turn_duration.
-        {
-            "type": "system",
-            "subtype": "turn_duration",
-            "timestamp": "2026-04-20T10:00:00.000Z",
-            "durationMs": 1500,
-        },
         {
             "type": "assistant",
             "uuid": "asst-1",
@@ -54,6 +50,13 @@ def _fixture_events() -> list[dict]:
                 ],
             },
         },
+        # turn_duration for asst-1, emitted AFTER the turn it measures.
+        {
+            "type": "system",
+            "subtype": "turn_duration",
+            "timestamp": "2026-04-20T10:00:01.510Z",
+            "durationMs": 1500,
+        },
         # Tool result matching tu_1, 2s after the tool_use.
         {
             "type": "user",
@@ -71,12 +74,6 @@ def _fixture_events() -> list[dict]:
         },
         # Second turn, no tool_use, error-free.
         {
-            "type": "system",
-            "subtype": "turn_duration",
-            "timestamp": "2026-04-20T10:00:04.000Z",
-            "durationMs": 500,
-        },
-        {
             "type": "assistant",
             "uuid": "asst-2",
             "timestamp": "2026-04-20T10:00:04.500Z",
@@ -84,6 +81,12 @@ def _fixture_events() -> list[dict]:
                 "usage": {"input_tokens": 20, "output_tokens": 5},
                 "content": [{"type": "text", "text": "done"}],
             },
+        },
+        {
+            "type": "system",
+            "subtype": "turn_duration",
+            "timestamp": "2026-04-20T10:00:04.510Z",
+            "durationMs": 500,
         },
     ]
 
