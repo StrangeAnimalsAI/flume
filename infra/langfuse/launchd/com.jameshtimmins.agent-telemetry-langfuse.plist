@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent for the self-hosted Langfuse stack.
+
+  Mirrors the Collector plist: runs `docker compose up -d` at login so the
+  Langfuse UI + ingestion endpoint come back automatically after a reboot.
+  Compose services already carry `restart: always`, so OrbStack will usually
+  resurrect them on its own — this plist is the belt-and-suspenders pass.
+
+  Installation:
+
+    cp infra/langfuse/launchd/com.jameshtimmins.agent-telemetry-langfuse.plist \
+       ~/Library/LaunchAgents/
+    launchctl load -w \
+       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-langfuse.plist
+
+  Stop / unload:
+
+    launchctl unload \
+       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-langfuse.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jameshtimmins.agent-telemetry-langfuse</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>/usr/local/bin/docker compose -f infra/langfuse/docker-compose.yml up -d</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/james/Code/tools/agent-telemetry</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/agent-telemetry-langfuse.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/agent-telemetry-langfuse.stderr.log</string>
+</dict>
+</plist>
