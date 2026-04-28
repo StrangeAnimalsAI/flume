@@ -119,6 +119,12 @@ notes per var:
 set — flip them on per-shell when you need verbatim prompt or full Messages
 API bodies.
 
+Claude Code's native live spans emit token attrs as `input_tokens`,
+`output_tokens`, `cache_read_tokens`, and `cache_creation_tokens`. The
+collector preserves those raw fields and also copies them into the
+backfill-compatible `gen_ai.usage.*` fields so live and replayed Claude
+sessions use the same analysis vocabulary in Langfuse.
+
 ## Codex: global config traces
 
 Codex reads live OTel configuration from `~/.codex/config.toml`. The current

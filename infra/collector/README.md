@@ -109,12 +109,20 @@ docker compose down                        # stop (no volumes to preserve)
 ## What the config does
 
 Pipeline: `otlp receivers → memory_limiter → resource/enrich →
-transform/langfuse_source → transform/pii → batch → otlphttp/langfuse`.
+transform/claude_code_genai → transform/langfuse_source → transform/pii →
+batch → otlphttp/langfuse`.
 
 - **`resource/enrich`** tags `host.name` (from the `HOST_NAME` env var),
   fills `service.instance.id` if a sender didn't set one, and upserts
   `deployment.environment=local` + `telemetry.collector.name`. Does NOT
   touch the `source` attribute — backfill and live recipes own that.
+- **`transform/claude_code_genai`** copies native Claude Code live token
+  attrs into the same `gen_ai.usage.*` keys used by backfill. It preserves
+  raw native attrs (`input_tokens`, `output_tokens`, `cache_read_tokens`,
+  `cache_creation_tokens`) and only fills missing canonical attrs:
+  `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,
+  `gen_ai.usage.cache_read_input_tokens`, and
+  `gen_ai.usage.cache_creation_input_tokens`.
 - **`transform/langfuse_source`** copies sender identity into Langfuse
   trace metadata on every span:
   `langfuse.trace.metadata.agent_source`,
