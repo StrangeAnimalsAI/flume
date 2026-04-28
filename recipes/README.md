@@ -18,6 +18,7 @@ OTLP.
 | ---------------------------- | ----------------- | ---------------------------------------------------- |
 | `claude-code-cli.env.sh`     | `claude` in TTY   | `source` from `~/.zshrc` (or once per shell)         |
 | `claude-code-desktop.plist`  | Claude Desktop.app| LaunchAgent that runs `launchctl setenv` per var     |
+| `codex-config.toml`          | Codex CLI/Desktop | Copy `[otel]` into `~/.codex/config.toml` after review |
 
 The CLI script and the desktop plist set the **same** env vars with one
 deliberate difference: `OTEL_RESOURCE_ATTRIBUTES=source=claude-code-cli` vs
@@ -117,6 +118,54 @@ notes per var:
 set — flip them on per-shell when you need verbatim prompt or full Messages
 API bodies.
 
+## Codex: global config traces
+
+Codex reads live OTel configuration from `~/.codex/config.toml`. The current
+Codex config reference separates logs and traces:
+
+- `otel.exporter` controls the log exporter.
+- `otel.trace_exporter` controls the trace exporter.
+
+The local collector currently has a traces pipeline only. For live Codex
+sessions to appear in Langfuse, the Codex config must set `trace_exporter`
+and target the collector's HTTP traces endpoint:
+
+```toml
+[otel]
+environment = "local"
+log_user_prompt = false
+trace_exporter = { otlp-http = { endpoint = "http://localhost:4318/v1/traces", protocol = "binary" } }
+```
+
+The same snippet is tracked in [`codex-config.toml`](codex-config.toml).
+Copy it into the user's global `~/.codex/config.toml` only after manager
+review. This repo intentionally does not edit that file.
+
+Do not add `otel.exporter` for Codex logs as part of this trace recipe. The
+collector logs/metrics pipeline work is tracked separately in INT-582.
+
+### Codex Langfuse smoke test
+
+After the collector and Langfuse are running, start a fresh Codex session
+with the global config above, wait a few seconds for export, then check recent
+Langfuse traces for `codex.*` names:
+
+```bash
+set -a
+source infra/langfuse/.env
+for page in 1 2 3 4 5; do
+  curl -sS \
+    -u "$LANGFUSE_INIT_PROJECT_PUBLIC_KEY:$LANGFUSE_INIT_PROJECT_SECRET_KEY" \
+    "http://localhost:3000/api/public/traces?limit=100&page=$page"
+done | jq -s 'map(.data // []) | add | map(select((.name // "") | startswith("codex"))) | length'
+```
+
+Expected result: a non-zero count. In the Langfuse UI, open
+`http://localhost:3000`, choose project `agent-telemetry-proj`, and filter
+recent traces by names starting with `codex`. A healthy live session should
+include a `codex.interaction` root trace with request and tool observations
+when the live exporter emits them.
+
 ## See also
 
 - [`infra/collector/README.md`](../infra/collector/README.md) — Collector
@@ -124,3 +173,4 @@ API bodies.
 - [`infra/langfuse/README.md`](../infra/langfuse/README.md) — Langfuse
   stack.
 - Claude Code OTel reference: <https://code.claude.com/docs/en/monitoring-usage>
+- Codex config reference: <https://developers.openai.com/codex/config-reference>
