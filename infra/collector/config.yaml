@@ -1,7 +1,8 @@
 # OpenTelemetry Collector config — local fan-in for agent-telemetry (INT-435).
 #
 # Shape: receivers (OTLP gRPC + HTTP on 4317/4318) → memory_limiter →
-# resource/enrich → transform/pii (no-op today) → batch → otlphttp/langfuse.
+# resource/enrich → transform/langfuse_source → transform/pii (no-op today)
+# → batch → otlphttp/langfuse.
 #
 # Env-var dependencies (set in .env, loaded by docker-compose):
 #   LANGFUSE_BASIC_AUTH  — `Basic <base64(pk:sk)>` value for the Authorization
@@ -87,6 +88,28 @@ processors:
           # PII scrub lands.
           - set(attributes["telemetry.pii_scrub.version"], "0")
 
+  # Promote sender identity into Langfuse's first-level trace metadata. Keep
+  # raw OTel `source` as a resource attribute for compatibility; these span
+  # attrs are Langfuse projections so trace/session lists can be filtered by
+  # `metadata.agent_source` / `metadata.agent_family` / `metadata.agent_surface`.
+  # Langfuse recommends propagating trace-level attrs to every span.
+  transform/langfuse_source:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["langfuse.trace.metadata.agent_source"], resource.attributes["source"]) where attributes["langfuse.trace.metadata.agent_source"] == nil and resource.attributes["source"] != nil
+          - set(attributes["langfuse.trace.metadata.agent_source"], "codex") where attributes["langfuse.trace.metadata.agent_source"] == nil and IsMatch(name, "^codex[._]")
+          - set(attributes["langfuse.trace.metadata.agent_source"], "claude-code") where attributes["langfuse.trace.metadata.agent_source"] == nil and IsMatch(name, "^claude_code[._]")
+          - set(attributes["langfuse.trace.metadata.agent_family"], "codex") where attributes["langfuse.trace.metadata.agent_family"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "codex"
+          - set(attributes["langfuse.trace.metadata.agent_family"], "claude-code") where attributes["langfuse.trace.metadata.agent_family"] == nil and IsMatch(attributes["langfuse.trace.metadata.agent_source"], "^claude-code")
+          - set(attributes["langfuse.trace.metadata.agent_surface"], "cli") where attributes["langfuse.trace.metadata.agent_surface"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "claude-code-cli"
+          - set(attributes["langfuse.trace.metadata.agent_surface"], "desktop") where attributes["langfuse.trace.metadata.agent_surface"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "claude-code-desktop"
+          - set(attributes["langfuse.trace.tags"], ["agent:codex", "family:codex"]) where attributes["langfuse.trace.tags"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "codex"
+          - set(attributes["langfuse.trace.tags"], ["agent:claude-code", "family:claude-code"]) where attributes["langfuse.trace.tags"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "claude-code"
+          - set(attributes["langfuse.trace.tags"], ["agent:claude-code-cli", "family:claude-code", "surface:cli"]) where attributes["langfuse.trace.tags"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "claude-code-cli"
+          - set(attributes["langfuse.trace.tags"], ["agent:claude-code-desktop", "family:claude-code", "surface:desktop"]) where attributes["langfuse.trace.tags"] == nil and attributes["langfuse.trace.metadata.agent_source"] == "claude-code-desktop"
+
   # Batch last. 5s / 8192 spans is the OTel default shape; tuned down from
   # the exporter-side batching the backfill CLI does today so live senders
   # don't see a per-request tail.
@@ -123,5 +146,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, resource/enrich, transform/pii, batch]
+      processors: [memory_limiter, resource/enrich, transform/langfuse_source, transform/pii, batch]
       exporters: [otlphttp/langfuse]

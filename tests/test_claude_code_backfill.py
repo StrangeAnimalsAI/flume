@@ -106,6 +106,12 @@ def test_root_span_covers_whole_session(tmp_path: Path) -> None:
     assert root["attributes"]["claude_code.version"] == "2.1.114"
     assert root["attributes"]["git.branch"] == "main"
     assert root["attributes"]["source"] == "claude-code"
+    assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "claude-code"
+    assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "claude-code"
+    assert root["attributes"]["langfuse.trace.tags"] == [
+        "agent:claude-code",
+        "family:claude-code",
+    ]
     # First event is the turn_duration at 10:00:00; last is the second turn.
     assert root["start_unix_nano"] < root["end_unix_nano"]
 
@@ -120,6 +126,8 @@ def test_turn_span_carries_usage_and_duration(tmp_path: Path) -> None:
 
     first = turns[0]
     attrs = first["attributes"]
+    assert attrs["langfuse.trace.metadata.agent_source"] == "claude-code"
+    assert attrs["langfuse.trace.metadata.agent_family"] == "claude-code"
     assert attrs["gen_ai.usage.input_tokens"] == 100
     assert attrs["gen_ai.usage.output_tokens"] == 50
     assert attrs["gen_ai.usage.cache_read_input_tokens"] == 900

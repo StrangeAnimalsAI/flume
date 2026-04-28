@@ -108,13 +108,20 @@ docker compose down                        # stop (no volumes to preserve)
 
 ## What the config does
 
-Pipeline: `otlp receivers → memory_limiter → resource/enrich → transform/pii
-→ batch → otlphttp/langfuse`.
+Pipeline: `otlp receivers → memory_limiter → resource/enrich →
+transform/langfuse_source → transform/pii → batch → otlphttp/langfuse`.
 
 - **`resource/enrich`** tags `host.name` (from the `HOST_NAME` env var),
   fills `service.instance.id` if a sender didn't set one, and upserts
   `deployment.environment=local` + `telemetry.collector.name`. Does NOT
   touch the `source` attribute — backfill and live recipes own that.
+- **`transform/langfuse_source`** copies sender identity into Langfuse
+  trace metadata on every span:
+  `langfuse.trace.metadata.agent_source`,
+  `langfuse.trace.metadata.agent_family`, optional
+  `langfuse.trace.metadata.agent_surface`, and `langfuse.trace.tags`. It
+  preserves raw `resource.source` and falls back to known span name prefixes
+  (`codex.*`, `claude_code.*`) when a sender did not set `source`.
 - **`transform/pii`** is a stub. It runs a no-op OTTL statement today; real
   redactions land as a one-line change when we need them.
 - **`batch`** uses the 5s / 8192-span OTel default.

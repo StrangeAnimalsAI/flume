@@ -184,6 +184,14 @@ def test_root_span_covers_whole_rollout(tmp_path: Path) -> None:
     assert root["attributes"]["entrypoint"] == "vscode"
     assert root["attributes"]["codex.originator"] == "Codex Desktop"
     assert root["attributes"]["gen_ai.request.model"] == "gpt-5.4"
+    assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "codex"
+    assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "codex"
+    assert root["attributes"]["langfuse.trace.metadata.agent_surface"] == "vscode"
+    assert root["attributes"]["langfuse.trace.tags"] == [
+        "agent:codex",
+        "family:codex",
+        "surface:vscode",
+    ]
     assert root["start_unix_nano"] < root["end_unix_nano"]
 
 
@@ -197,6 +205,9 @@ def test_turn_span_carries_usage_and_reasoning(tmp_path: Path) -> None:
 
     first = turns[0]
     a = first["attributes"]
+    assert a["langfuse.trace.metadata.agent_source"] == "codex"
+    assert a["langfuse.trace.metadata.agent_family"] == "codex"
+    assert a["langfuse.trace.metadata.agent_surface"] == "vscode"
     assert a["gen_ai.system"] == "openai"
     assert a["gen_ai.request.model"] == "gpt-5.4"
     assert a["gen_ai.usage.input_tokens"] == 100

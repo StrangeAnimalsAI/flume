@@ -129,6 +129,12 @@ def test_adapter_preserves_ids_timestamps_and_hierarchy(tmp_path: Path) -> None:
     assert tool.end_time == tool_dict["end_unix_nano"]
 
     # Attributes: key ones round-trip.
+    assert root.attributes["langfuse.trace.metadata.agent_source"] == "claude-code"
+    assert root.attributes["langfuse.trace.metadata.agent_family"] == "claude-code"
+    assert tuple(root.attributes["langfuse.trace.tags"]) == (
+        "agent:claude-code",
+        "family:claude-code",
+    )
     assert turn.attributes["gen_ai.usage.cache_read_input_tokens"] == 900
     assert tool.attributes["tool.name"] == "Read"
     assert tool.attributes["tool.result_chars"] == 1024

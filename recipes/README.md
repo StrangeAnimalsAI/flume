@@ -22,9 +22,10 @@ OTLP.
 
 The CLI script and the desktop plist set the **same** env vars with one
 deliberate difference: `OTEL_RESOURCE_ATTRIBUTES=source=claude-code-cli` vs
-`source=claude-code-desktop`. That's how cross-source comparisons stay
-honest — a Langfuse filter on `resource.source` separates them cleanly even
-though they share the binary, model, and account.
+`source=claude-code-desktop`. The collector preserves that raw OTel resource
+attribute and also promotes it into Langfuse-visible
+`metadata.agent_source`, `metadata.agent_family`, `metadata.agent_surface`,
+and tags.
 
 ## CLI: source-and-go
 
@@ -165,6 +166,26 @@ Expected result: a non-zero count. In the Langfuse UI, open
 recent traces by names starting with `codex`. A healthy live session should
 include a `codex.interaction` root trace with request and tool observations
 when the live exporter emits them.
+
+## Source in Langfuse
+
+For new ingests, source appears in two places:
+
+- Raw OTel compatibility: `metadata.resourceAttributes.source`.
+- Langfuse filtering/scanning: `metadata.agent_source`,
+  `metadata.agent_family`, optional `metadata.agent_surface`, and `tags`.
+
+Claude live recipes set `source=claude-code-cli` or
+`source=claude-code-desktop`, so the collector can derive
+`agent_family=claude-code` and `agent_surface=cli|desktop`. Backfill mappers
+stamp the Langfuse attributes directly on every replayed span while preserving
+their existing raw `source` attribute/resource.
+
+Codex live export does not currently have a repo-owned way to add a
+`source` resource attribute without editing the user's global Codex config.
+The collector therefore falls back to `codex.*` span names and sets
+`agent_source=codex`, `agent_family=codex`, and matching tags when those spans
+arrive.
 
 ## See also
 

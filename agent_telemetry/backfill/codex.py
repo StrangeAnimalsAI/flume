@@ -81,6 +81,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent_telemetry.backfill.langfuse import enrich_trace_attrs
+
 Span = dict[str, Any]
 
 # Match the 60 KB cap used by Claude Code's OTel log path.
@@ -291,7 +293,12 @@ def rollout_to_spans(path: Path) -> list[Span]:
     # Sort tools by start to keep a stable order (deterministic for
     # idempotent byte-identical dry-runs).
     tool_spans.sort(key=lambda s: (s["start_unix_nano"], s["span_id"]))
-    return [root, *turn_spans, *tool_spans]
+    return enrich_trace_attrs(
+        [root, *turn_spans, *tool_spans],
+        agent_source="codex",
+        agent_family="codex",
+        agent_surface=session_source,
+    )
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:

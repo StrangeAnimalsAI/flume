@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agent_telemetry.backfill.langfuse import enrich_trace_attrs
+
 Span = dict[str, Any]
 
 # Match the 60 KB cap the native Claude Code OTel export applies with
@@ -97,7 +99,11 @@ def jsonl_to_spans(path: Path) -> list[Span]:
         },
         "status": "OK",
     }
-    return [root, *spans]
+    return enrich_trace_attrs(
+        [root, *spans],
+        agent_source="claude-code",
+        agent_family="claude-code",
+    )
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
