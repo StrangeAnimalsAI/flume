@@ -112,8 +112,37 @@ def test_root_span_covers_whole_session(tmp_path: Path) -> None:
         "agent:claude-code",
         "family:claude-code",
     ]
-    # First event is the turn_duration at 10:00:00; last is the second turn.
+    # Root covers the retroactively shifted first turn and the session tail.
     assert root["start_unix_nano"] < root["end_unix_nano"]
+
+
+def test_root_start_covers_retroactively_shifted_turn(tmp_path: Path) -> None:
+    events = [
+        {
+            "type": "assistant",
+            "uuid": "asst-retro",
+            "timestamp": "2026-04-20T10:00:00.000Z",
+            "message": {
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "done"}],
+            },
+        },
+        {
+            "type": "system",
+            "subtype": "turn_duration",
+            "timestamp": "2026-04-20T10:00:00.010Z",
+            "durationMs": 1500,
+        },
+    ]
+    path = tmp_path / "retro.jsonl"
+    _write_jsonl(path, events)
+
+    spans = jsonl_to_spans(path)
+    root = spans[0]
+    children = spans[1:]
+
+    assert children
+    assert root["start_unix_nano"] <= min(s["start_unix_nano"] for s in children)
 
 
 def test_turn_span_carries_usage_and_duration(tmp_path: Path) -> None:

@@ -83,13 +83,16 @@ def jsonl_to_spans(path: Path) -> list[Span]:
     if first_ns is None:
         return []
 
+    root_start_ns = min([first_ns, *(s["start_unix_nano"] for s in spans)])
+    root_end_ns = max([last_ns, *(s["end_unix_nano"] for s in spans)])
+
     root: Span = {
         "name": "claude_code.interaction",
         "trace_id": trace_id,
         "span_id": root_span_id,
         "parent_span_id": None,
-        "start_unix_nano": first_ns,
-        "end_unix_nano": last_ns,
+        "start_unix_nano": root_start_ns,
+        "end_unix_nano": root_end_ns,
         "attributes": {
             "source": "claude-code",
             "session.id": session_id,
