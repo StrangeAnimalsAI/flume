@@ -43,6 +43,37 @@ echo 'source /Users/james/Code/tools/agent-telemetry/recipes/claude-code-cli.env
 To turn it off without editing `~/.zshrc`, `unset CLAUDE_CODE_ENABLE_TELEMETRY`
 in the current shell.
 
+### CLI trace grouping caveat
+
+Claude Code's trace docs say each user prompt starts a
+`claude_code.interaction` span, with `claude_code.llm_request`,
+`claude_code.tool`, and related spans as children. They also say Agent SDK and
+non-interactive `claude -p` runs honor inbound `TRACEPARENT` / `TRACESTATE`,
+while interactive CLI sessions ignore inbound `TRACEPARENT`.
+
+In local Langfuse audits against Claude Code 2.1.122, live CLI telemetry can
+still split a single `session.id` across multiple trace IDs: one trace may
+contain `claude_code.interaction` plus a child request, while later
+`claude_code.llm_request` spans from the same session appear as top-level
+traces with no parent. That means this is not just a Langfuse display issue;
+the child spans arrive without parent linkage and, in observed cases, with
+different trace IDs.
+
+Until Claude's native exporter emits stable interaction grouping for every
+live CLI span, inspect native live sessions by `session.id` as well as by
+trace ID. Use this check to summarize recent Langfuse data and flag split
+sessions or orphan child spans:
+
+```bash
+uv run python -m agent_telemetry.analysis.claude_live_trace_check
+```
+
+The collector should not synthesize missing `claude_code.interaction` roots:
+repairing this safely would require stateful, session-aware grouping by
+`session.id` and time window, then rewriting trace/parent IDs. That belongs
+in an offline analysis/backfill layer or upstream exporter behavior, not in
+the stateless local collector pipeline.
+
 ## Desktop: load, then relaunch
 
 The desktop app inherits env from the launchd user-domain session, not your

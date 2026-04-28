@@ -77,6 +77,20 @@ or from `--public-key` / `--secret-key`, summarizes recent observations by
 `source` and `service.name`, and exits non-zero if it still sees known
 Docker/buildx signatures.
 
+## Claude live grouping check
+
+Native Claude Code live traces may split one `session.id` across multiple
+Langfuse trace IDs when child spans arrive without a
+`claude_code.interaction` parent. Summarize recent Claude observations with:
+
+```bash
+uv run python -m agent_telemetry.analysis.claude_live_trace_check
+```
+
+This is a detection check, not a collector repair path. The collector keeps
+trace processing stateless; safely rebuilding missing interaction roots would
+require session-aware grouping and trace/parent ID rewriting.
+
 ## Smoke test
 
 Send a hand-crafted OTLP JSON span to the collector and verify it lands in
