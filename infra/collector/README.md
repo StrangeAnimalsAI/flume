@@ -50,6 +50,33 @@ The Claude live recipes set `OTEL_LOGS_EXPORTER=none` and
 `OTEL_METRICS_EXPORTER=none` so logs/metrics are not silently sent to a
 collector that will not forward them.
 
+## Config validation
+
+Validate the Collector config without starting the local collector or reading
+real `.env` secrets:
+
+```bash
+infra/collector/validate-config.sh
+```
+
+The script runs the pinned `otel/opentelemetry-collector-contrib:0.112.0`
+image with dummy env vars and executes `validate
+--config=/etc/otelcol-contrib/config.yaml`.
+
+## Recent noise check
+
+After restarting the collector and running a Docker/buildx-heavy agent task,
+check recent Langfuse traces for leftover infrastructure noise:
+
+```bash
+uv run python -m agent_telemetry.analysis.collector_noise_check
+```
+
+The check reads Langfuse credentials from `infra/langfuse/.env` by default
+or from `--public-key` / `--secret-key`, summarizes recent observations by
+`source` and `service.name`, and exits non-zero if it still sees known
+Docker/buildx signatures.
+
 ## Smoke test
 
 Send a hand-crafted OTLP JSON span to the collector and verify it lands in
@@ -122,10 +149,18 @@ docker compose down                        # stop (no volumes to preserve)
 
 ## What the config does
 
-Pipeline: `otlp receivers → memory_limiter → resource/enrich →
-transform/claude_code_genai → transform/langfuse_source → transform/pii →
-batch → otlphttp/langfuse`.
+Pipeline: `otlp receivers → memory_limiter → filter/drop_non_agent_infra →
+resource/enrich → transform/claude_code_genai → transform/langfuse_source →
+transform/pii → batch → otlphttp/langfuse`.
 
+- **`filter/drop_non_agent_infra`** drops Docker/buildx/BuildKit internal
+  traces that can inherit the agent OTEL environment from tool subprocesses
+  and otherwise appear as agent sessions in Langfuse. It filters spans whose
+  names or `rpc.service` attrs are in BuildKit's `moby.buildkit.*`,
+  `moby.filesync.*`, or `moby.auth.*` gRPC namespaces, plus spans whose
+  resource `service.name` is `docker`, `buildx`, `buildkit`, `moby`, or those
+  names followed by `.`, `_`, or `-`. Real Claude Code and Codex agent spans
+  use `claude_code.*` / `codex.*` names or source metadata and are preserved.
 - **`resource/enrich`** tags `host.name` (from the `HOST_NAME` env var),
   fills `service.instance.id` if a sender didn't set one, and upserts
   `deployment.environment=local` + `telemetry.collector.name`. Does NOT

@@ -1,9 +1,9 @@
 # OpenTelemetry Collector config — local fan-in for agent-telemetry (INT-435).
 #
 # Shape: OTLP traces receiver (gRPC + HTTP on 4317/4318) → memory_limiter →
-# resource/enrich → transform/claude_code_genai →
-# transform/langfuse_source → transform/pii (no-op today) → batch →
-# otlphttp/langfuse.
+# filter/drop_non_agent_infra → resource/enrich →
+# transform/claude_code_genai → transform/langfuse_source →
+# transform/pii (no-op today) → batch → otlphttp/langfuse.
 # Logs and metrics are intentionally not configured; see the Collector README.
 #
 # Env-var dependencies (set in .env, loaded by docker-compose):
@@ -46,6 +46,20 @@ processors:
     check_interval: 1s
     limit_mib: 512
     spike_limit_mib: 128
+
+  # Drop known Docker/BuildKit subprocess telemetry before Langfuse metadata
+  # projection. These spans can inherit agent OTEL env vars from Claude Code or
+  # Codex tool execution, which makes Langfuse treat Docker/buildx internals as
+  # agent sessions. The matchers are intentionally narrow to BuildKit's moby
+  # gRPC service namespace and Docker/buildx service names; agent spans named
+  # `claude_code.*` and `codex.*` pass through unchanged.
+  filter/drop_non_agent_infra:
+    error_mode: ignore
+    traces:
+      span:
+        - 'IsMatch(name, "^/?moby\\.(buildkit|filesync|auth)\\.")'
+        - 'IsMatch(attributes["rpc.service"], "^moby\\.(buildkit|filesync|auth)\\.")'
+        - 'IsMatch(resource.attributes["service.name"], "^(docker|buildx|buildkit|moby)($|[._-])")'
 
   # Universal resource attrs. `upsert` vs `insert` matters here:
   #   - host.name, service.instance.id: `insert` so we NEVER clobber a sender
@@ -165,5 +179,5 @@ service:
     # so those signals are not silently dropped.
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, resource/enrich, transform/claude_code_genai, transform/langfuse_source, transform/pii, batch]
+      processors: [memory_limiter, filter/drop_non_agent_infra, resource/enrich, transform/claude_code_genai, transform/langfuse_source, transform/pii, batch]
       exporters: [otlphttp/langfuse]

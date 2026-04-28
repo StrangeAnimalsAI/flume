@@ -166,6 +166,15 @@ review. This repo intentionally does not edit that file.
 Do not add `otel.exporter` for Codex logs as part of this trace recipe. The
 collector logs/metrics pipeline work is tracked separately in INT-582.
 
+The collector also drops known Docker/buildx/BuildKit infrastructure traces
+before source metadata projection. That prevents subprocess spans in
+BuildKit's `moby.buildkit.*`, `moby.filesync.*`, and `moby.auth.*`
+namespaces, or resources whose `service.name` identifies Docker/buildx, from
+showing up as Codex or Claude Code sessions when they inherit agent OTEL env
+vars. After changing the filter, run
+`uv run python -m agent_telemetry.analysis.collector_noise_check` to summarize
+recent Langfuse traces by source/service and confirm the noise is absent.
+
 ### Codex Langfuse smoke test
 
 After the collector and Langfuse are running, start a fresh Codex session
