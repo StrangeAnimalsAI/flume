@@ -188,6 +188,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
             # we still close on the end event below.
             if pt == "exec_command_end":
                 entry["exit_code"] = p.get("exit_code")
+                entry["end_ns"] = ts_ns
                 dur = p.get("duration") or {}
                 if isinstance(dur, dict):
                     secs = int(dur.get("secs") or 0)
@@ -196,6 +197,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
                 entry["exec_output"] = p.get("aggregated_output") or ""
             else:  # patch_apply_end
                 entry["success"] = bool(p.get("success"))
+                entry["end_ns"] = ts_ns
                 entry["exec_output"] = (p.get("stdout") or "") + (
                     p.get("stderr") or ""
                 )
@@ -208,44 +210,35 @@ def rollout_to_spans(path: Path) -> list[Span]:
             entry = pending_tools.pop(call_id, None)
             if entry is None:
                 continue
-            output = p.get("output") or ""
-            result_chars = _result_chars(output, entry.get("exec_output"))
-            is_error = _is_error(entry)
-            start_ns = entry["start_ns"]
-            # Prefer the exec_command_end duration when present (it's the real
-            # process wall time; function_call_output can lag). Otherwise use
-            # function_call → function_call_output.
-            exec_duration_ns = entry.get("exec_duration_ns")
-            if exec_duration_ns:
-                duration_ms = exec_duration_ns // 1_000_000
-            else:
-                duration_ms = max(0, (ts_ns - start_ns) // 1_000_000)
             tool_spans.append(
-                {
-                    "name": "codex.tool",
-                    "trace_id": trace_id,
-                    "span_id": _span_id(session_id, f"tool:{call_id}"),
-                    # parent_span_id set in second pass (needs turn ids)
-                    "_parent_start_ns": start_ns,
-                    "parent_span_id": None,
-                    "start_unix_nano": start_ns,
-                    "end_unix_nano": ts_ns,
-                    "attributes": {
-                        "tool.name": entry["name"],
-                        "tool.arguments": _coerce_args(entry["arguments"])[
-                            :_TOOL_PAYLOAD_MAX
-                        ],
-                        "tool.duration_ms": duration_ms,
-                        "tool.is_error": is_error,
-                        "tool.result_chars": result_chars,
-                    },
-                    "status": "ERROR" if is_error else "OK",
-                }
+                _tool_span(
+                    session_id,
+                    trace_id,
+                    call_id,
+                    entry,
+                    ts_ns,
+                    p.get("output") or "",
+                )
             )
             continue
 
     if first_ns is None:
         return []
+
+    for call_id, entry in pending_tools.items():
+        end_ns = entry.get("end_ns")
+        if end_ns is None:
+            continue
+        tool_spans.append(
+            _tool_span(
+                session_id,
+                trace_id,
+                call_id,
+                entry,
+                end_ns,
+                "",
+            )
+        )
 
     # Build turn spans now that boundaries are known.
     turn_spans: list[Span] = []
@@ -408,6 +401,44 @@ def _turn_span(
             "codex.turn_index": index,
         },
         "status": "OK",
+    }
+
+
+def _tool_span(
+    session_id: str,
+    trace_id: str,
+    call_id: str,
+    entry: dict[str, Any],
+    end_ns: int,
+    output: Any,
+) -> Span:
+    result_chars = _result_chars(output, entry.get("exec_output"))
+    is_error = _is_error(entry)
+    start_ns = entry["start_ns"]
+    # Prefer the exec_command_end duration when present (it's the real
+    # process wall time; function_call_output can lag or be missing).
+    exec_duration_ns = entry.get("exec_duration_ns")
+    if exec_duration_ns:
+        duration_ms = exec_duration_ns // 1_000_000
+    else:
+        duration_ms = max(0, (end_ns - start_ns) // 1_000_000)
+    return {
+        "name": "codex.tool",
+        "trace_id": trace_id,
+        "span_id": _span_id(session_id, f"tool:{call_id}"),
+        # parent_span_id set in second pass (needs turn ids)
+        "_parent_start_ns": start_ns,
+        "parent_span_id": None,
+        "start_unix_nano": start_ns,
+        "end_unix_nano": end_ns,
+        "attributes": {
+            "tool.name": entry["name"],
+            "tool.arguments": _coerce_args(entry["arguments"])[:_TOOL_PAYLOAD_MAX],
+            "tool.duration_ms": duration_ms,
+            "tool.is_error": is_error,
+            "tool.result_chars": result_chars,
+        },
+        "status": "ERROR" if is_error else "OK",
     }
 
 

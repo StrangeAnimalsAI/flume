@@ -316,6 +316,75 @@ def test_exec_error_sets_error_status(tmp_path: Path) -> None:
     assert tool["status"] == "ERROR"
 
 
+def test_exec_end_without_function_output_still_emits_tool_span(
+    tmp_path: Path,
+) -> None:
+    events = [
+        _meta("missing-output-session"),
+        {
+            "timestamp": "2026-04-20T10:00:00.005Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "t"},
+        },
+        _turn_context(),
+        {
+            "timestamp": "2026-04-20T10:00:01.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": "printf hi"}),
+                "call_id": "call_no_output",
+            },
+        },
+        {
+            "timestamp": "2026-04-20T10:00:01.500Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-04-20T10:00:01.600Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "exec_command_end",
+                "call_id": "call_no_output",
+                "command": ["/bin/zsh", "-lc", "printf hi"],
+                "stdout": "hi",
+                "stderr": "",
+                "aggregated_output": "hi",
+                "exit_code": 0,
+                "duration": {"secs": 0, "nanos": 25_000_000},
+            },
+        },
+    ]
+    path = tmp_path / "rollout-missing-output.jsonl"
+    _write_jsonl(path, events)
+
+    spans = rollout_to_spans(path)
+    turns = [s for s in spans if s["name"] == "codex.llm_request"]
+    tools = [s for s in spans if s["name"] == "codex.tool"]
+
+    assert len(tools) == 1
+    tool = tools[0]
+    assert tool["parent_span_id"] == turns[0]["span_id"]
+    assert tool["end_unix_nano"] == 1776679201600000000
+    assert tool["attributes"]["tool.name"] == "exec_command"
+    assert tool["attributes"]["tool.duration_ms"] == 25
+    assert tool["attributes"]["tool.result_chars"] == len("hi")
+    assert tool["attributes"]["tool.is_error"] is False
+    assert tool["status"] == "OK"
+    assert tool["attributes"]["langfuse.trace.metadata.agent_source"] == "codex"
+    assert "agent:codex" in tool["attributes"]["langfuse.trace.tags"]
+
+
 def test_ids_are_deterministic(tmp_path: Path) -> None:
     p1 = tmp_path / "a.jsonl"
     p2 = tmp_path / "copy" / "a.jsonl"
