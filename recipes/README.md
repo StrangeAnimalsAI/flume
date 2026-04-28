@@ -5,7 +5,7 @@ local OTel Collector. The Collector is the prerequisite — see
 [`infra/collector/README.md`](../infra/collector/README.md) for bring-up.
 
 ```
-agent (process)  ->  http://localhost:4318  ->  collector  ->  Langfuse
+agent traces  ->  http://localhost:4318  ->  collector  ->  Langfuse
 ```
 
 These recipes hold no secrets. The Collector carries the Langfuse basic-auth
@@ -86,9 +86,8 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000/api/public/otel
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=$AUTH"
 ```
 
-Note the Langfuse base path is `/api/public/otel`; signal-specific endpoints
-(`/v1/traces`, `/v1/logs`, `/v1/metrics`) hang off it. The Collector hides
-that detail; bypassing means you wear it.
+Note the Langfuse base path is `/api/public/otel`; the trace endpoint is
+`/v1/traces`. The Collector hides that detail; bypassing means you wear it.
 
 ## What the env vars actually do
 
@@ -97,11 +96,15 @@ notes per var:
 
 - `CLAUDE_CODE_ENABLE_TELEMETRY=1` — master switch. Without it, no signals.
 - `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` — turns on the spans pipeline.
-  Traces are documented as **beta** as of 2026-04. Without this, only
-  metrics + log/event signals emit (no `claude_code.interaction` /
-  `claude_code.llm_request` / `claude_code.tool` spans).
-- `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=otlp`,
-  `OTEL_TRACES_EXPORTER=otlp` — fan all three signals into the Collector.
+  Traces are documented as **beta** as of 2026-04. Without this, no
+  `claude_code.interaction` / `claude_code.llm_request` /
+  `claude_code.tool` spans.
+- `OTEL_TRACES_EXPORTER=otlp` — sends trace spans to the Collector.
+- `OTEL_METRICS_EXPORTER=none`, `OTEL_LOGS_EXPORTER=none` — intentionally
+  disabled. The local Langfuse OTLP stack does not expose a supported,
+  inspectable logs path (`/v1/logs` returns 404), and raw OTLP metrics are
+  not visible in the Langfuse trace/session UI or public trace API. Langfuse
+  product metrics should be read from ingested traces/observations instead.
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`,
   `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` — Collector's HTTP
   receiver.
@@ -109,9 +112,8 @@ notes per var:
   tool names in `tool_result` events and span attrs.
 - `OTEL_LOG_TOOL_CONTENT=1` — un-redacts tool input/output bodies in span
   events, capped at 60 KB. Requires tracing.
-- `OTEL_METRIC_EXPORT_INTERVAL=10000`, `OTEL_LOGS_EXPORT_INTERVAL=2000`,
-  `OTEL_TRACES_EXPORT_INTERVAL=2000` — shorter than the 60s/5s/5s docs
-  defaults so quick `claude -p` runs flush before exit.
+- `OTEL_TRACES_EXPORT_INTERVAL=2000` — shorter than the 5s docs default so
+  quick `claude -p` runs flush before exit.
 - `OTEL_RESOURCE_ATTRIBUTES=source=claude-code-{cli,desktop}` — the
   cross-source discriminator.
 
@@ -124,6 +126,19 @@ Claude Code's native live spans emit token attrs as `input_tokens`,
 collector preserves those raw fields and also copies them into the
 backfill-compatible `gen_ai.usage.*` fields so live and replayed Claude
 sessions use the same analysis vocabulary in Langfuse.
+
+## Signal Support
+
+| Signal | Sender recipe | Collector pipeline | Langfuse visibility |
+| ------ | ------------- | ------------------ | ------------------- |
+| Traces | enabled       | forwarded          | Trace/session list, observations, public traces API |
+| Logs   | disabled      | not configured     | Unsupported here; direct `/api/public/otel/v1/logs` returns 404 |
+| Metrics| disabled      | not configured     | Use Langfuse Metrics API over trace/observation data, not raw OTLP metric points |
+
+For trace checks, open `http://localhost:3000` and inspect the trace/session
+list, or query `GET /api/public/traces`. Logs and raw OTLP metrics are
+disabled at the Claude sender so they are not silently dropped by the
+trace-only Collector.
 
 ## Codex: global config traces
 

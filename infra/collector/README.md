@@ -36,6 +36,20 @@ docker compose ps
 # otel-collector running; 127.0.0.1:4317-4318 bound.
 ```
 
+## Signal support
+
+This local Collector intentionally forwards traces only.
+
+| Signal | Collector pipeline | Langfuse support in this stack |
+| ------ | ------------------ | ------------------------------ |
+| Traces | yes                | Visible in the trace/session UI and `/api/public/traces` |
+| Logs   | no                 | Unsupported here; direct `/api/public/otel/v1/logs` returns 404 |
+| Metrics| no                 | Langfuse product metrics derive from traces/observations, not raw OTLP metric points |
+
+The Claude live recipes set `OTEL_LOGS_EXPORTER=none` and
+`OTEL_METRICS_EXPORTER=none` so logs/metrics are not silently sent to a
+collector that will not forward them.
+
 ## Smoke test
 
 Send a hand-crafted OTLP JSON span to the collector and verify it lands in
@@ -134,6 +148,9 @@ batch → otlphttp/langfuse`.
   redactions land as a one-line change when we need them.
 - **`batch`** uses the 5s / 8192-span OTel default.
 - **`memory_limiter`** caps at 512 MiB.
+- **Logs/metrics** are not configured. Senders that need Langfuse-visible
+  data should put it on trace spans/observations until this stack has a
+  supported, inspectable logs or raw-metrics destination.
 
 ## Known rough edges
 

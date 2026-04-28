@@ -1,9 +1,10 @@
 # OpenTelemetry Collector config — local fan-in for agent-telemetry (INT-435).
 #
-# Shape: receivers (OTLP gRPC + HTTP on 4317/4318) → memory_limiter →
+# Shape: OTLP traces receiver (gRPC + HTTP on 4317/4318) → memory_limiter →
 # resource/enrich → transform/claude_code_genai →
 # transform/langfuse_source → transform/pii (no-op today) → batch →
 # otlphttp/langfuse.
+# Logs and metrics are intentionally not configured; see the Collector README.
 #
 # Env-var dependencies (set in .env, loaded by docker-compose):
 #   LANGFUSE_BASIC_AUTH  — `Basic <base64(pk:sk)>` value for the Authorization
@@ -159,6 +160,9 @@ service:
     logs:
       level: info
   pipelines:
+    # Trace-only by design. Langfuse's OTLP path is the inspectable store for
+    # trace/session observations here; Claude recipes disable log/metric export
+    # so those signals are not silently dropped.
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource/enrich, transform/claude_code_genai, transform/langfuse_source, transform/pii, batch]

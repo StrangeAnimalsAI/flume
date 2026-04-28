@@ -64,7 +64,7 @@
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>/bin/launchctl setenv CLAUDE_CODE_ENABLE_TELEMETRY 1 &amp;&amp; /bin/launchctl setenv CLAUDE_CODE_ENHANCED_TELEMETRY_BETA 1 &amp;&amp; /bin/launchctl setenv OTEL_METRICS_EXPORTER otlp &amp;&amp; /bin/launchctl setenv OTEL_LOGS_EXPORTER otlp &amp;&amp; /bin/launchctl setenv OTEL_TRACES_EXPORTER otlp &amp;&amp; /bin/launchctl setenv OTEL_EXPORTER_OTLP_PROTOCOL http/protobuf &amp;&amp; /bin/launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://localhost:4318 &amp;&amp; /bin/launchctl setenv OTEL_LOG_TOOL_DETAILS 1 &amp;&amp; /bin/launchctl setenv OTEL_LOG_TOOL_CONTENT 1 &amp;&amp; /bin/launchctl setenv OTEL_METRIC_EXPORT_INTERVAL 10000 &amp;&amp; /bin/launchctl setenv OTEL_LOGS_EXPORT_INTERVAL 2000 &amp;&amp; /bin/launchctl setenv OTEL_TRACES_EXPORT_INTERVAL 2000 &amp;&amp; /bin/launchctl setenv OTEL_RESOURCE_ATTRIBUTES source=claude-code-desktop</string>
+        <string>/bin/launchctl setenv CLAUDE_CODE_ENABLE_TELEMETRY 1 &amp;&amp; /bin/launchctl setenv CLAUDE_CODE_ENHANCED_TELEMETRY_BETA 1 &amp;&amp; /bin/launchctl setenv OTEL_METRICS_EXPORTER none &amp;&amp; /bin/launchctl setenv OTEL_LOGS_EXPORTER none &amp;&amp; /bin/launchctl setenv OTEL_TRACES_EXPORTER otlp &amp;&amp; /bin/launchctl setenv OTEL_EXPORTER_OTLP_PROTOCOL http/protobuf &amp;&amp; /bin/launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://localhost:4318 &amp;&amp; /bin/launchctl setenv OTEL_LOG_TOOL_DETAILS 1 &amp;&amp; /bin/launchctl setenv OTEL_LOG_TOOL_CONTENT 1 &amp;&amp; /bin/launchctl setenv OTEL_TRACES_EXPORT_INTERVAL 2000 &amp;&amp; /bin/launchctl setenv OTEL_RESOURCE_ATTRIBUTES source=claude-code-desktop</string>
     </array>
 
     <!--

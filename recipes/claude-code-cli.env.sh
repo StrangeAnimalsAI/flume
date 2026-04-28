@@ -19,15 +19,16 @@
 # 1. Master switch. Required for any telemetry to leave the process.
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
 
-# 2. Traces are still beta as of 2026-04. Without this flag, only metrics +
-#    logs/events emit; no spans. Both names are accepted by Claude Code; we set
-#    the documented one.
+# 2. Traces are still beta as of 2026-04. Without this flag, no spans. Both
+#    names are accepted by Claude Code; we set the documented one.
 export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
 
-# 3. Pick the three exporter signals. `otlp` for all so they fan into the
-#    Collector on the same endpoint.
-export OTEL_METRICS_EXPORTER=otlp
-export OTEL_LOGS_EXPORTER=otlp
+# 3. Export traces only. Langfuse's OTLP endpoint is trace-oriented in this
+#    local stack: /v1/logs returns 404, and raw OTLP metrics are not visible
+#    in Langfuse's trace/session UI or public trace API. Keep those senders
+#    disabled instead of silently dropping signals in the Collector.
+export OTEL_METRICS_EXPORTER=none
+export OTEL_LOGS_EXPORTER=none
 export OTEL_TRACES_EXPORTER=otlp
 
 # 4. OTLP endpoint + protocol. Collector exposes 4318 (HTTP) and 4317 (gRPC);
@@ -44,10 +45,8 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 export OTEL_LOG_TOOL_DETAILS=1
 export OTEL_LOG_TOOL_CONTENT=1
 
-# 6. Faster export intervals than the docs defaults (60s metrics / 5s logs).
-#    The CLI lifecycle is short; long intervals lose data on quick `-p` runs.
-export OTEL_METRIC_EXPORT_INTERVAL=10000
-export OTEL_LOGS_EXPORT_INTERVAL=2000
+# 6. Faster trace export interval than the 5s docs default. The CLI lifecycle
+#    is short; long intervals lose data on quick `-p` runs.
 export OTEL_TRACES_EXPORT_INTERVAL=2000
 
 # 7. Tag the source so `claude-code-cli` vs `claude-code-desktop` stays
