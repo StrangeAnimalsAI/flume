@@ -33,3 +33,52 @@ def test_non_agent_infra_filter_does_not_match_agent_prefixes() -> None:
 
     assert "claude_code" not in filter_block
     assert "codex" not in filter_block
+
+
+def test_codex_service_name_classification_overrides_inherited_source() -> None:
+    text = CONFIG.read_text()
+    source_block = text.split("transform/langfuse_source:", 1)[1].split(
+        "  # Batch last.", 1
+    )[0]
+
+    codex_service_rule = (
+        'set(attributes["langfuse.trace.metadata.agent_source"], "codex") '
+        'where attributes["langfuse.trace.metadata.agent_source"] == nil '
+        'and IsMatch(resource.attributes["service.name"], "^codex")'
+    )
+    inherited_source_rule = (
+        'set(attributes["langfuse.trace.metadata.agent_source"], '
+        'resource.attributes["source"])'
+    )
+
+    assert codex_service_rule in source_block
+    assert source_block.index(codex_service_rule) < source_block.index(
+        inherited_source_rule
+    )
+    assert 'set(attributes["langfuse.trace.metadata.agent_family"], "codex")' in source_block
+    assert (
+        'set(attributes["langfuse.trace.tags"], ["agent:codex", "family:codex"])'
+        in source_block
+    )
+
+
+def test_claude_name_fallback_still_exists_after_inherited_source_rule() -> None:
+    text = CONFIG.read_text()
+    source_block = text.split("transform/langfuse_source:", 1)[1].split(
+        "  # Batch last.", 1
+    )[0]
+
+    inherited_source_rule = (
+        'set(attributes["langfuse.trace.metadata.agent_source"], '
+        'resource.attributes["source"])'
+    )
+    claude_name_rule = (
+        'set(attributes["langfuse.trace.metadata.agent_source"], "claude-code") '
+        'where attributes["langfuse.trace.metadata.agent_source"] == nil '
+        'and IsMatch(name, "^claude_code[._]")'
+    )
+
+    assert claude_name_rule in source_block
+    assert source_block.index(inherited_source_rule) < source_block.index(
+        claude_name_rule
+    )

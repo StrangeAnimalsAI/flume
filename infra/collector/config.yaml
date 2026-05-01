@@ -122,12 +122,16 @@ processors:
   # raw OTel `source` as a resource attribute for compatibility; these span
   # attrs are Langfuse projections so trace/session lists can be filtered by
   # `metadata.agent_source` / `metadata.agent_family` / `metadata.agent_surface`.
+  # Codex-owned live services are classified before raw `source` is copied so
+  # app-server subprocesses that inherit `source=claude-code-cli` still show up
+  # as Codex in Langfuse.
   # Langfuse recommends propagating trace-level attrs to every span.
   transform/langfuse_source:
     error_mode: ignore
     trace_statements:
       - context: span
         statements:
+          - set(attributes["langfuse.trace.metadata.agent_source"], "codex") where attributes["langfuse.trace.metadata.agent_source"] == nil and IsMatch(resource.attributes["service.name"], "^codex")
           - set(attributes["langfuse.trace.metadata.agent_source"], resource.attributes["source"]) where attributes["langfuse.trace.metadata.agent_source"] == nil and resource.attributes["source"] != nil
           - set(attributes["langfuse.trace.metadata.agent_source"], "codex") where attributes["langfuse.trace.metadata.agent_source"] == nil and IsMatch(name, "^codex[._]")
           - set(attributes["langfuse.trace.metadata.agent_source"], "claude-code") where attributes["langfuse.trace.metadata.agent_source"] == nil and IsMatch(name, "^claude_code[._]")

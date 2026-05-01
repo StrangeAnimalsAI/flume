@@ -191,8 +191,11 @@ transform/pii → batch → otlphttp/langfuse`.
   `langfuse.trace.metadata.agent_source`,
   `langfuse.trace.metadata.agent_family`, optional
   `langfuse.trace.metadata.agent_surface`, and `langfuse.trace.tags`. It
-  preserves raw `resource.source` and falls back to known span name prefixes
-  (`codex.*`, `claude_code.*`) when a sender did not set `source`.
+  classifies Codex-owned live services first when resource `service.name`
+  starts with `codex`, so `codex-app-server` and `codex_exec` traces stay
+  Codex even if they inherited `source=claude-code-cli` from the shell. It
+  then preserves raw `resource.source` and falls back to known span name
+  prefixes (`codex.*`, `claude_code.*`) when a sender did not set `source`.
 - **`transform/pii`** is a stub. It runs a no-op OTTL statement today; real
   redactions land as a one-line change when we need them.
 - **`batch`** uses the 5s / 8192-span OTel default.

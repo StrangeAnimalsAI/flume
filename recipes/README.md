@@ -206,27 +206,55 @@ vars. After changing the filter, run
 `uv run python -m agent_telemetry.analysis.collector_noise_check` to summarize
 recent Langfuse traces by source/service and confirm the noise is absent.
 
+The collector classifies Codex-owned live services before copying raw
+`resource.source`. This keeps `service.name=codex-app-server` and
+`service.name=codex_exec` traces filterable as Codex even when those processes
+inherit `OTEL_RESOURCE_ATTRIBUTES=source=claude-code-cli` from a shell.
+
 ### Codex Langfuse smoke test
 
 After the collector and Langfuse are running, start a fresh Codex session
 with the global config above, wait a few seconds for export, then check recent
-Langfuse traces for `codex.*` names:
+Langfuse traces for `service.name=codex-app-server` classified as Codex:
 
 ```bash
-set -a
-source infra/langfuse/.env
-for page in 1 2 3 4 5; do
-  curl -sS \
-    -u "$LANGFUSE_INIT_PROJECT_PUBLIC_KEY:$LANGFUSE_INIT_PROJECT_SECRET_KEY" \
-    "http://localhost:3000/api/public/traces?limit=100&page=$page"
-done | jq -s 'map(.data // []) | add | map(select((.name // "") | startswith("codex"))) | length'
+docker exec langfuse-langfuse-web-1 node -e '
+const pk = process.env.LANGFUSE_INIT_PROJECT_PUBLIC_KEY;
+const sk = process.env.LANGFUSE_INIT_PROJECT_SECRET_KEY;
+const auth = "Basic " + Buffer.from(`${pk}:${sk}`).toString("base64");
+const base = "http://langfuse-web:3000";
+const first = (...xs) => xs.find((v) => v !== undefined && v !== null && v !== "") || "unknown";
+const md = (x) => (x && x.metadata) || {};
+const attrs = (x) => md(x).attributes || {};
+const res = (x) => md(x).resourceAttributes || {};
+(async () => {
+  const list = await fetch(`${base}/api/public/traces?limit=50`, {headers: {Authorization: auth}});
+  const rows = (await list.json()).data || [];
+  const out = [];
+  for (const row of rows) {
+    const detail = await fetch(`${base}/api/public/traces/${row.id}`, {headers: {Authorization: auth}});
+    const trace = await detail.json();
+    const observations = Array.isArray(trace.observations) ? trace.observations : [];
+    const service = first(res(trace)["service.name"], res(row)["service.name"], ...observations.map((o) => res(o)["service.name"]));
+    if (service !== "codex-app-server") continue;
+    out.push({
+      id: trace.id,
+      name: trace.name,
+      source: first(res(trace).source, res(row).source, ...observations.map((o) => res(o).source)),
+      agent_source: first(md(trace).agent_source, md(row).agent_source, ...observations.map((o) => attrs(o)["langfuse.trace.metadata.agent_source"])),
+      agent_family: first(md(trace).agent_family, md(row).agent_family, ...observations.map((o) => attrs(o)["langfuse.trace.metadata.agent_family"])),
+    });
+  }
+  console.log(JSON.stringify(out.slice(0, 5), null, 2));
+})().catch((err) => { console.error(err); process.exit(1); });
+'
 ```
 
-Expected result: a non-zero count. In the Langfuse UI, open
-`http://localhost:3000`, choose project `agent-telemetry-proj`, and filter
-recent traces by names starting with `codex`. A healthy live session should
-include a `codex.interaction` root trace with request and tool observations
-when the live exporter emits them.
+Expected result for fresh traces: `source` may still show the inherited raw
+resource value, but `agent_source` and `agent_family` should both be `codex`.
+In the Langfuse UI, open `http://localhost:3000`, choose project
+`agent-telemetry-proj`, and filter recent traces by `metadata.agent_source =
+codex` or tag `agent:codex`.
 
 ## Source in Langfuse
 
@@ -242,11 +270,12 @@ Claude live recipes set `source=claude-code-cli` or
 stamp the Langfuse attributes directly on every replayed span while preserving
 their existing raw `source` attribute/resource.
 
-Codex live export does not currently have a repo-owned way to add a
-`source` resource attribute without editing the user's global Codex config.
-The collector therefore falls back to `codex.*` span names and sets
-`agent_source=codex`, `agent_family=codex`, and matching tags when those spans
-arrive.
+Codex live app-server traces may inherit raw `source=claude-code-cli` from
+the launching shell. The collector leaves that raw resource attribute intact
+for compatibility, but `service.name` values beginning with `codex` win for
+Langfuse metadata: `agent_source=codex`, `agent_family=codex`, and matching
+tags. If no Codex service name is present, the collector still falls back to
+`codex.*` span names.
 
 ## See also
 
