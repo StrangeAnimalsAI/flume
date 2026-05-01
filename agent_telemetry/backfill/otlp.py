@@ -12,6 +12,7 @@ IdGenerator and hand a pre-built `SpanContext` to `_Span` directly.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from opentelemetry.sdk.resources import Resource
@@ -21,6 +22,7 @@ from opentelemetry.trace import SpanContext, SpanKind, Status, StatusCode, Trace
 Span = dict[str, Any]
 
 _SAMPLED = TraceFlags(0x01)
+_LANGFUSE_PAYLOAD_MAX = 60_000
 
 
 def export_spans_via_otlp(
@@ -97,6 +99,7 @@ def _build_span(
     attributes = {
         k: v for k, v in (sd.get("attributes") or {}).items() if v is not None
     }
+    _add_langfuse_payload_attributes(attributes, sd)
 
     span = _Span(
         name=sd["name"],
@@ -115,3 +118,38 @@ def _build_span(
         span.set_status(Status(StatusCode.OK))
     span.end(end_time=sd["end_unix_nano"])
     return span
+
+
+def _add_langfuse_payload_attributes(
+    attributes: dict[str, Any],
+    sd: Span,
+) -> None:
+    input_payload = sd.get("input")
+    output_payload = sd.get("output")
+    if input_payload is not None:
+        encoded = _encode_langfuse_payload(input_payload)
+        attributes.setdefault("langfuse.observation.input", encoded)
+        if sd.get("parent_span_id") is None:
+            attributes.setdefault("langfuse.trace.input", encoded)
+    if output_payload is not None:
+        encoded = _encode_langfuse_payload(output_payload)
+        attributes.setdefault("langfuse.observation.output", encoded)
+        if sd.get("parent_span_id") is None:
+            attributes.setdefault("langfuse.trace.output", encoded)
+
+
+def _encode_langfuse_payload(value: Any) -> str:
+    try:
+        encoded = json.dumps(value)
+    except (TypeError, ValueError):
+        encoded = json.dumps(str(value))
+    if len(encoded) <= _LANGFUSE_PAYLOAD_MAX:
+        return encoded
+    return json.dumps(
+        {
+            "truncated": True,
+            "truncated_chars": len(encoded) - _LANGFUSE_PAYLOAD_MAX,
+            "value": encoded[:_LANGFUSE_PAYLOAD_MAX],
+        },
+        sort_keys=True,
+    )

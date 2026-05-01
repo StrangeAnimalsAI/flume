@@ -87,6 +87,9 @@ Span = dict[str, Any]
 
 # Match the 60 KB cap used by Claude Code's OTel log path.
 _TOOL_PAYLOAD_MAX = 60_000
+_TRANSCRIPT_ITEM_MAX = 4_000
+_ROOT_TRANSCRIPT_ITEMS_MAX = 50
+_ROOT_TRANSCRIPT_PREVIEW_MAX = 800
 
 
 def rollout_to_spans(path: Path) -> list[Span]:
@@ -117,11 +120,14 @@ def rollout_to_spans(path: Path) -> list[Span]:
     first_ns: int | None = None
     last_ns: int | None = None
     boundary_ns = _ts_ns(events[0].get("timestamp"))  # opening edge of first turn
-    turn_boundaries: list[tuple[int, int, dict[str, Any]]] = []
-    # (start_ns, end_ns, last_token_usage)
+    payload_boundary_ns = boundary_ns
+    turn_boundaries: list[tuple[int, int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    # (start_ns, end_ns, last_token_usage, input_payload, output_payload)
 
     pending_tools: dict[str, dict[str, Any]] = {}
     tool_spans: list[Span] = []
+    transcript_items: list[dict[str, Any]] = []
+    reasoning_items = 0
 
     for ev in events:
         ts_ns = _ts_ns(ev.get("timestamp"))
@@ -133,6 +139,11 @@ def rollout_to_spans(path: Path) -> list[Span]:
         if not isinstance(p, dict):
             continue
         pt = p.get("type")
+        if pt == "reasoning":
+            reasoning_items += 1
+        item = _transcript_item(p, ts_ns)
+        if item is not None:
+            transcript_items.append(item)
 
         if pt == "token_count":
             info = p.get("info") or {}
@@ -148,8 +159,16 @@ def rollout_to_spans(path: Path) -> list[Span]:
                 continue
             if ts_ns is None or boundary_ns is None:
                 continue
-            turn_boundaries.append((boundary_ns, ts_ns, last))
+            input_payload, output_payload = _turn_payloads(
+                transcript_items,
+                payload_boundary_ns,
+                ts_ns,
+            )
+            turn_boundaries.append(
+                (boundary_ns, ts_ns, last, input_payload, output_payload)
+            )
             boundary_ns = ts_ns
+            payload_boundary_ns = ts_ns
             continue
 
         if pt == "function_call" and ts_ns is not None:
@@ -242,7 +261,9 @@ def rollout_to_spans(path: Path) -> list[Span]:
 
     # Build turn spans now that boundaries are known.
     turn_spans: list[Span] = []
-    for i, (start_ns, end_ns, last) in enumerate(turn_boundaries):
+    for i, (start_ns, end_ns, last, input_payload, output_payload) in enumerate(
+        turn_boundaries
+    ):
         turn_spans.append(
             _turn_span(
                 i,
@@ -253,6 +274,8 @@ def rollout_to_spans(path: Path) -> list[Span]:
                 trace_id,
                 root_span_id,
                 model,
+                input_payload,
+                output_payload,
             )
         )
 
@@ -264,6 +287,11 @@ def rollout_to_spans(path: Path) -> list[Span]:
         parent = _find_turn_for(turn_spans, start_ns)
         tool["parent_span_id"] = parent["span_id"] if parent else root_span_id
 
+    root_input, root_output = _root_payloads(
+        session_id,
+        transcript_items,
+        reasoning_items,
+    )
     root: Span = {
         "name": "codex.interaction",
         "trace_id": trace_id,
@@ -279,7 +307,10 @@ def rollout_to_spans(path: Path) -> list[Span]:
             "codex.cli_version": cli_version,
             "codex.cwd": cwd,
             "gen_ai.request.model": model,
+            "codex.reasoning_items": reasoning_items,
         },
+        "input": root_input,
+        "output": root_output,
         "status": "OK",
     }
 
@@ -378,12 +409,14 @@ def _turn_span(
     trace_id: str,
     root_span_id: str,
     model: str | None,
+    input_payload: dict[str, Any],
+    output_payload: dict[str, Any],
 ) -> Span:
     input_tokens = int(last_usage.get("input_tokens") or 0)
     cached = int(last_usage.get("cached_input_tokens") or 0)
     output_tokens = int(last_usage.get("output_tokens") or 0)
     reasoning_tokens = int(last_usage.get("reasoning_output_tokens") or 0)
-    return {
+    span = {
         "name": "codex.llm_request",
         "trace_id": trace_id,
         "span_id": _span_id(session_id, f"turn:{index}"),
@@ -407,6 +440,11 @@ def _turn_span(
         },
         "status": "OK",
     }
+    if input_payload:
+        span["input"] = input_payload
+    if output_payload:
+        span["output"] = output_payload
+    return span
 
 
 def _tool_span(
@@ -427,6 +465,8 @@ def _tool_span(
         duration_ms = exec_duration_ns // 1_000_000
     else:
         duration_ms = max(0, (end_ns - start_ns) // 1_000_000)
+    arguments = _coerce_args(entry["arguments"])[:_TOOL_PAYLOAD_MAX]
+    display_output = _coerce_output(output, entry.get("exec_output"))[:_TOOL_PAYLOAD_MAX]
     return {
         "name": "codex.tool",
         "trace_id": trace_id,
@@ -438,11 +478,17 @@ def _tool_span(
         "end_unix_nano": end_ns,
         "attributes": {
             "tool.name": entry["name"],
-            "tool.arguments": _coerce_args(entry["arguments"])[:_TOOL_PAYLOAD_MAX],
+            "tool.arguments": arguments,
             "tool.duration_ms": duration_ms,
             "tool.is_error": is_error,
             "tool.result_chars": result_chars,
         },
+        "input": {
+            "call_id": call_id,
+            "name": entry["name"],
+            "arguments": _json_or_text(arguments),
+        },
+        "output": display_output,
         "status": "ERROR" if is_error else "OK",
     }
 
@@ -492,6 +538,209 @@ def _coerce_args(args: Any) -> str:
         return json.dumps(args)
     except (TypeError, ValueError):
         return str(args)
+
+
+def _coerce_output(output: Any, exec_output: Any) -> str:
+    if isinstance(output, str) and output:
+        return output
+    if isinstance(exec_output, str) and exec_output:
+        return exec_output
+    if isinstance(output, (list, dict)):
+        return json.dumps(output)
+    if isinstance(exec_output, (list, dict)):
+        return json.dumps(exec_output)
+    return ""
+
+
+def _transcript_item(payload: dict[str, Any], ts_ns: int | None) -> dict[str, Any] | None:
+    pt = payload.get("type")
+    if pt == "user_message":
+        text = payload.get("message")
+        if isinstance(text, str) and text:
+            return _message_item(ts_ns, "user", text, "event_msg.user_message")
+        return None
+    if pt == "agent_message":
+        text = payload.get("message")
+        if isinstance(text, str) and text:
+            item = _message_item(ts_ns, "assistant", text, "event_msg.agent_message")
+            phase = payload.get("phase")
+            if isinstance(phase, str) and phase:
+                item["phase"] = phase
+            return item
+        return None
+    if pt == "message":
+        role = payload.get("role")
+        if role not in ("user", "assistant"):
+            return None
+        text = _content_text(payload.get("content"))
+        if not text:
+            return None
+        item = _message_item(ts_ns, role, text, "response_item.message")
+        phase = payload.get("phase")
+        if isinstance(phase, str) and phase:
+            item["phase"] = phase
+        return item
+    if pt in ("function_call", "custom_tool_call"):
+        call_id = payload.get("call_id")
+        name = payload.get("name")
+        args = payload.get("arguments") if pt == "function_call" else payload.get("input")
+        if not isinstance(call_id, str) or not isinstance(name, str):
+            return None
+        return {
+            "ts_ns": ts_ns,
+            "direction": "output",
+            "type": "tool_call",
+            "call_id": call_id,
+            "name": name,
+            "arguments": _json_or_text(_coerce_args(args)[:_TOOL_PAYLOAD_MAX]),
+        }
+    if pt in ("function_call_output", "custom_tool_call_output"):
+        call_id = payload.get("call_id")
+        output = payload.get("output")
+        if not isinstance(call_id, str):
+            return None
+        return {
+            "ts_ns": ts_ns,
+            "direction": "input",
+            "type": "tool_result",
+            "call_id": call_id,
+            "output": _truncate_text(_coerce_output(output, None), _TOOL_PAYLOAD_MAX),
+        }
+    return None
+
+
+def _message_item(
+    ts_ns: int | None,
+    role: str,
+    text: str,
+    source: str,
+) -> dict[str, Any]:
+    return {
+        "ts_ns": ts_ns,
+        "direction": "input" if role == "user" else "output",
+        "type": "message",
+        "role": role,
+        "source": source,
+        "content": _truncate_text(text, _TRANSCRIPT_ITEM_MAX),
+    }
+
+
+def _turn_payloads(
+    items: list[dict[str, Any]],
+    start_ns: int | None,
+    end_ns: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    selected = [
+        item
+        for item in items
+        if item.get("ts_ns") is not None
+        and (start_ns is None or int(item["ts_ns"]) > start_ns)
+        and int(item["ts_ns"]) <= end_ns
+    ]
+    inputs = [_strip_internal(item) for item in selected if item["direction"] == "input"]
+    outputs = [_strip_internal(item) for item in selected if item["direction"] == "output"]
+    input_payload = {"messages": inputs} if inputs else {}
+    output_payload = {"messages": outputs} if outputs else {}
+    return input_payload, output_payload
+
+
+def _root_payloads(
+    session_id: str,
+    items: list[dict[str, Any]],
+    reasoning_items: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    user_requests = [
+        _strip_internal(item)
+        for item in items
+        if item["type"] == "message" and item["role"] == "user"
+    ]
+    assistant_messages = [
+        _strip_internal(item)
+        for item in items
+        if item["type"] == "message" and item["role"] == "assistant"
+    ]
+    tool_calls = [item for item in items if item["type"] == "tool_call"]
+    tool_results = [item for item in items if item["type"] == "tool_result"]
+
+    root_input: dict[str, Any] = {
+        "counts": {
+            "user_requests": len(user_requests),
+        },
+        "session_id": session_id,
+        "user_requests": _bounded_items(user_requests),
+    }
+    root_output: dict[str, Any] = {
+        "counts": {
+            "assistant_messages": len(assistant_messages),
+            "tool_calls": len(tool_calls),
+            "tool_outputs": len(tool_results),
+            "opaque_reasoning_items": reasoning_items,
+        },
+        "session_id": session_id,
+        "assistant_messages": _bounded_items(assistant_messages),
+    }
+    return root_input, root_output
+
+
+def _bounded_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    kept = [_root_preview_item(item) for item in items[:_ROOT_TRANSCRIPT_ITEMS_MAX]]
+    if len(items) <= _ROOT_TRANSCRIPT_ITEMS_MAX:
+        return kept
+    kept.append(
+        {
+            "type": "truncation_notice",
+            "omitted_items": len(items) - _ROOT_TRANSCRIPT_ITEMS_MAX,
+        }
+    )
+    return kept
+
+
+def _root_preview_item(item: dict[str, Any]) -> dict[str, Any]:
+    preview = dict(item)
+    for key in ("content", "output"):
+        value = preview.get(key)
+        if isinstance(value, str) and len(value) > _ROOT_TRANSCRIPT_PREVIEW_MAX:
+            preview[key] = _truncate_text(value, _ROOT_TRANSCRIPT_PREVIEW_MAX)
+    return preview
+
+
+def _strip_internal(item: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in item.items() if k not in {"direction", "ts_ns"}}
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") in {"reasoning", "encrypted_reasoning"}:
+            continue
+        for key in ("text", "content", "input_text", "output_text"):
+            value = block.get(key)
+            if isinstance(value, str) and value:
+                parts.append(value)
+                break
+    return "\n".join(parts)
+
+
+def _json_or_text(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return value
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
 
 
 def _cli(argv: list[str] | None = None) -> int:

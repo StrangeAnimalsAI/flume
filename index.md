@@ -27,6 +27,8 @@ agent-telemetry-auto-ingest --source codex --once --dry-run
 
 Dry-run mode lists pending or skipped Codex files with session id, path, mtime, fingerprint, source metadata, and reason without writing to Langfuse. Real ingest reuses the existing Codex rollout mapper and OTLP exporter, preserving the `codex.interaction`, `codex.llm_request`, and `codex.tool` vocabulary plus Langfuse source metadata/tags. Add `--include-archived-codex` to include `~/.codex/archived_sessions/*.jsonl`, or pass one or more `--codex-root` values for fixture/custom roots.
 
+After ingest, inspect the canonical Codex trace in Langfuse rather than the live app-server trace for transcript detail. The root `codex.interaction` observation shows session-level user requests and assistant-visible transcript counts in Input/Output. Each `codex.llm_request` observation shows the relevant visible request/response slice for that model response. Each `codex.tool` observation uses Input for the tool name/arguments and Output for the bounded tool result. Opaque reasoning rollout items are counted as metadata only; encrypted/private reasoning text is not exposed.
+
 ## Layout
 
 - `agent_telemetry/backfill/` — parsers that turn historical session files into OTel spans.

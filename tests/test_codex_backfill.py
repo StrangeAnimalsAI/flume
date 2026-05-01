@@ -11,7 +11,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+
 from agent_telemetry.backfill.codex import rollout_to_spans
+from agent_telemetry.backfill.otlp import export_span_dicts
 
 
 def _write_jsonl(path: Path, events: list[dict]) -> None:
@@ -64,6 +72,27 @@ def _fixture_events() -> list[dict]:
             "timestamp": "2026-04-20T10:00:00.020Z",
             "type": "event_msg",
             "payload": {"type": "user_message", "message": "do a thing"},
+        },
+        {
+            "timestamp": "2026-04-20T10:00:00.025Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "phase": "commentary",
+                "message": "I'll list the files.",
+            },
+        },
+        {
+            "timestamp": "2026-04-20T10:00:00.026Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "content": [
+                    {"type": "output_text", "text": "I'll list the files."}
+                ],
+            },
         },
         # Pre-call snapshot (null info) — not a boundary.
         {
@@ -192,6 +221,14 @@ def test_root_span_covers_whole_rollout(tmp_path: Path) -> None:
         "family:codex",
         "surface:vscode",
     ]
+    assert root["input"]["user_requests"][0]["content"] == "do a thing"
+    assert root["output"]["counts"] == {
+        "assistant_messages": 2,
+        "tool_calls": 2,
+        "tool_outputs": 2,
+        "opaque_reasoning_items": 0,
+    }
+    assert root["output"]["assistant_messages"][0]["content"] == "I'll list the files."
     assert root["start_unix_nano"] < root["end_unix_nano"]
 
 
@@ -215,11 +252,24 @@ def test_turn_span_carries_usage_and_reasoning(tmp_path: Path) -> None:
     assert a["gen_ai.usage.cache_read_input_tokens"] == 80
     assert a["codex.reasoning_tokens"] == 30
     assert a["codex.turn_index"] == 0
+    assert first["input"]["messages"][0]["content"] == "do a thing"
+    assert any(
+        m["type"] == "tool_call" and m["name"] == "exec_command"
+        for m in first["output"]["messages"]
+    )
+    assert any(
+        m["type"] == "message" and "list the files" in m["content"]
+        for m in first["output"]["messages"]
+    )
 
     second = turns[1]
     assert second["attributes"]["gen_ai.usage.input_tokens"] == 250
     assert second["attributes"]["codex.reasoning_tokens"] == 5
     assert second["attributes"]["codex.turn_index"] == 1
+    assert any(
+        m["type"] == "tool_result" and "a.txt" in m["output"]
+        for m in second["input"]["messages"]
+    )
 
 
 def test_tool_spans_nest_under_correct_turn_with_exec_duration(
@@ -247,11 +297,135 @@ def test_tool_spans_nest_under_correct_turn_with_exec_duration(
         >= len("a.txt\nb.txt\n")
     )
     assert "ls" in by_name["exec_command"]["attributes"]["tool.arguments"]
+    assert by_name["exec_command"]["input"]["arguments"] == {"cmd": "ls"}
+    assert "a.txt" in by_name["exec_command"]["output"]
 
     # MCP tool fired during the second model response → parents to turn 2.
     mcp = by_name["mcp__linear__get_issue"]
     assert mcp["parent_span_id"] == turns[1]["span_id"]
     assert mcp["attributes"]["tool.duration_ms"] == 150
+    assert mcp["input"]["arguments"] == {"id": "INT-1"}
+    assert "issue details" in mcp["output"]
+
+
+def _collect(span_dicts: list[dict]) -> list:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(resource=Resource.create({"service.name": "t"}))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    export_span_dicts(
+        span_dicts,
+        Resource.create({"service.name": "t", "source": "codex"}),
+        provider._active_span_processor,
+    )
+    return list(exporter.get_finished_spans())
+
+
+def test_otlp_adapter_maps_payloads_to_langfuse_input_output_attrs(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rollout.jsonl"
+    _write_jsonl(path, _fixture_events())
+    finished = _collect(rollout_to_spans(path))
+
+    by_name = {span.name: span for span in finished}
+    root = by_name["codex.interaction"]
+    turn = next(
+        span
+        for span in finished
+        if span.name == "codex.llm_request"
+        and "langfuse.observation.input" in span.attributes
+        and "do a thing" in span.attributes["langfuse.observation.input"]
+    )
+    tool = next(span for span in finished if span.name == "codex.tool")
+
+    root_input = json.loads(root.attributes["langfuse.observation.input"])
+    root_output = json.loads(root.attributes["langfuse.observation.output"])
+    assert root.attributes["langfuse.trace.input"] == root.attributes[
+        "langfuse.observation.input"
+    ]
+    assert root.attributes["langfuse.trace.output"] == root.attributes[
+        "langfuse.observation.output"
+    ]
+    assert root_input["user_requests"][0]["content"] == "do a thing"
+    assert root_output["counts"]["tool_calls"] == 2
+
+    turn_input = json.loads(turn.attributes["langfuse.observation.input"])
+    turn_output = json.loads(turn.attributes["langfuse.observation.output"])
+    assert turn_input["messages"][0]["content"] == "do a thing"
+    assert any(item["type"] == "tool_call" for item in turn_output["messages"])
+
+    tool_input = json.loads(tool.attributes["langfuse.observation.input"])
+    tool_output = json.loads(tool.attributes["langfuse.observation.output"])
+    assert tool_input["arguments"] == {"cmd": "ls"}
+    assert "a.txt" in tool_output
+
+
+def test_root_payload_stays_summary_sized_for_large_transcripts(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rollout.jsonl"
+    rows = [
+        {
+            "timestamp": "2026-04-20T10:00:00.000Z",
+            "type": "session_meta",
+            "payload": {"id": "large-root", "source": "vscode"},
+        },
+        {
+            "timestamp": "2026-04-20T10:00:00.010Z",
+            "type": "turn_context",
+            "payload": {"turn_id": "turn-1", "model": "gpt-5.5"},
+        },
+        {
+            "timestamp": "2026-04-20T10:00:00.020Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "turn-1"},
+        },
+        {
+            "timestamp": "2026-04-20T10:00:00.030Z",
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "summarize"},
+        },
+    ]
+    rows.extend(
+        {
+            "timestamp": f"2026-04-20T10:00:00.{100 + i:03d}Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": f"chunk {i} " + ("x" * 5_000),
+            },
+        }
+        for i in range(80)
+    )
+    rows.append(
+        {
+            "timestamp": "2026-04-20T10:00:01.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1,
+                        "total_tokens": 2,
+                    }
+                },
+            },
+        }
+    )
+    _write_jsonl(path, rows)
+
+    [root] = [span for span in _collect(rollout_to_spans(path)) if span.name == "codex.interaction"]
+    root_output = json.loads(root.attributes["langfuse.observation.output"])
+
+    assert "truncated" not in root_output
+    assert root_output["counts"]["assistant_messages"] == 80
+    assert len(root_output["assistant_messages"]) == 51
+    assert root_output["assistant_messages"][-1] == {
+        "type": "truncation_notice",
+        "omitted_items": 30,
+    }
+    assert len(root.attributes["langfuse.observation.output"]) < 60_000
 
 
 def test_exec_error_sets_error_status(tmp_path: Path) -> None:
@@ -380,6 +554,8 @@ def test_exec_end_without_function_output_still_emits_tool_span(
     assert tool["attributes"]["tool.duration_ms"] == 25
     assert tool["attributes"]["tool.result_chars"] == len("hi")
     assert tool["attributes"]["tool.is_error"] is False
+    assert tool["input"]["arguments"] == {"cmd": "printf hi"}
+    assert tool["output"] == "hi"
     assert tool["status"] == "OK"
     assert tool["attributes"]["langfuse.trace.metadata.agent_source"] == "codex"
     assert "agent:codex" in tool["attributes"]["langfuse.trace.tags"]
