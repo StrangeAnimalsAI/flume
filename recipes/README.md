@@ -256,6 +256,35 @@ In the Langfuse UI, open `http://localhost:3000`, choose project
 `agent-telemetry-proj`, and filter recent traces by `metadata.agent_source =
 codex` or tag `agent:codex`.
 
+### Live Codex app-server vs rollout backfill
+
+Live Codex app-server telemetry is useful for freshness checks and partial
+turn/tool/model evidence, but it is not yet the canonical session analysis
+view that rollout backfill provides.
+
+Observed live app-server traces expose `turn.id`/`turn_id` on turn and model
+spans. Some tool spans, especially `mcp.tools.call`, also expose
+`session.id`/`conversation.id`, `turn.id`, `tool.name`, and tool call IDs.
+The runtime `thread.id` attribute is an OS/runtime worker thread identity and
+must not be treated as a Codex session.
+
+For LLM activity, live traces expose model/streaming candidates such as
+`model_client.stream_responses_websocket`, `run_sampling_request`, and
+`try_run_sampling_request`. Token counts currently appear on `handle_responses`
+as `gen_ai.usage.*` attributes, not as Langfuse usage totals. Tool activity can
+be read from `mcp.tools.call` spans and direct tool-name spans with call IDs.
+Internal spans such as `list_all_tools`, `build_tool_call`, and
+`handle_tool_call` are app-server mechanics, not faithful `codex.tool`
+records by themselves.
+
+As of the INT-695 check, recent live traces did not include Langfuse
+`input`/`output` payloads or prompt/transcript text attributes, even when they
+included model, turn, tool, duration, and token metadata. Use
+`agent_telemetry.analysis.codex_live_trace_check` to audit the current live
+shape. Use Codex rollout backfill for the canonical
+`codex.interaction` / `codex.llm_request` / `codex.tool` session view until
+live telemetry carries prompt/transcript payloads and a session-root span.
+
 ## Source in Langfuse
 
 For new ingests, source appears in two places:
