@@ -27,6 +27,8 @@ agent-telemetry-auto-ingest --source claude-code --once --dry-run
 
 Dry-run mode lists pending or skipped Claude Code files with session id, trace id, path, mtime, fingerprint, entrypoint metadata, and reason without writing to Langfuse. Real ingest reuses the existing Claude Code JSONL backfill mapper and OTLP exporter, preserving the `claude_code.interaction`, `claude_code.llm_request`, and `claude_code.tool` vocabulary plus Langfuse source metadata/tags. Pass one or more `--claude-root` values for fixture/custom roots; by default discovery walks `~/.claude/projects`.
 
+After ingest, inspect the canonical Claude Code trace in Langfuse for transcript detail. The root `claude_code.interaction` observation shows a preview-sized list of user requests in Input and assistant-visible transcript counts/previews in Output. Each `claude_code.llm_request` observation shows the relevant user/tool-result request slice in Input and visible assistant text/tool-call slice in Output. Each `claude_code.tool` observation uses Input for the tool name/arguments and Output for the bounded tool result. Hidden/private thinking blocks remain metadata/counts only.
+
 This canonical JSONL ingest is separate from native live Claude OTel. Use it when transcript-level grouping and deterministic replay matter. The live path still goes through the local Collector, but live Claude grouping fixes and launchd/Docker sidecar packaging are intentionally outside this auto-ingest path.
 
 ## Codex Auto-Ingest

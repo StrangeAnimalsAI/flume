@@ -34,6 +34,12 @@ def _fixture_events() -> list[dict]:
             "durationMs": 1500,
         },
         {
+            "type": "user",
+            "uuid": "user-1",
+            "timestamp": "2026-04-20T10:00:00.100Z",
+            "message": {"role": "user", "content": "read /tmp/a.py"},
+        },
+        {
             "type": "assistant",
             "uuid": "asst-1",
             "timestamp": "2026-04-20T10:00:01.500Z",
@@ -141,6 +147,40 @@ def test_adapter_preserves_ids_timestamps_and_hierarchy(tmp_path: Path) -> None:
 
     # Sampled flag on the wire.
     assert root.context.trace_flags.sampled is True
+
+
+def test_adapter_maps_payloads_to_langfuse_input_output_attrs(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "abc.jsonl"
+    _write_jsonl(path, _fixture_events())
+    finished = _collect(jsonl_to_spans(path))
+
+    by_name = {span.name: span for span in finished}
+    root = by_name["claude_code.interaction"]
+    turn = by_name["claude_code.llm_request"]
+    tool = by_name["claude_code.tool"]
+
+    root_input = json.loads(root.attributes["langfuse.observation.input"])
+    root_output = json.loads(root.attributes["langfuse.observation.output"])
+    assert root.attributes["langfuse.trace.input"] == root.attributes[
+        "langfuse.observation.input"
+    ]
+    assert root.attributes["langfuse.trace.output"] == root.attributes[
+        "langfuse.observation.output"
+    ]
+    assert root_input["user_requests"][0]["content"] == "read /tmp/a.py"
+    assert root_output["counts"]["tool_calls"] == 1
+
+    turn_input = json.loads(turn.attributes["langfuse.observation.input"])
+    turn_output = json.loads(turn.attributes["langfuse.observation.output"])
+    assert turn_input["messages"][0]["content"] == "read /tmp/a.py"
+    assert turn_output["messages"][0]["type"] == "tool_call"
+
+    tool_input = json.loads(tool.attributes["langfuse.observation.input"])
+    tool_output = json.loads(tool.attributes["langfuse.observation.output"])
+    assert tool_input["arguments"] == {"file_path": "/tmp/a.py"}
+    assert tool_output == "x" * 1024
 
 
 def test_adapter_marks_error_status(tmp_path: Path) -> None:
