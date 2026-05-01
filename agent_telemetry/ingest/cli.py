@@ -7,6 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+from agent_telemetry.ingest.claude_code import (
+    ClaudeCodeTranscriptSource,
+    ingest_claude_code_transcript,
+)
 from agent_telemetry.ingest.codex import (
     DEFAULT_CODEX_ARCHIVED_ROOT,
     CodexRolloutSource,
@@ -55,7 +59,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         default="fake",
-        help="Source adapter to use. Currently supported: fake, codex.",
+        help="Source adapter to use. Currently supported: fake, codex, claude-code.",
     )
     parser.add_argument(
         "--fake-root",
@@ -80,6 +84,15 @@ def _parser() -> argparse.ArgumentParser:
         "--codex-archived-root",
         type=Path,
         help="Archived Codex sessions root for tests or custom layouts.",
+    )
+    parser.add_argument(
+        "--claude-root",
+        action="append",
+        type=Path,
+        help=(
+            "Claude Code projects root, transcript file, or fixture root. May be "
+            "provided more than once. Defaults to ~/.claude/projects."
+        ),
     )
     parser.add_argument(
         "--endpoint",
@@ -146,7 +159,17 @@ def _source_and_ingest(
 
         return source, ingest
 
-    parser.error(f"unsupported --source {args.source!r}; supported: fake, codex")
+    if args.source == "claude-code":
+        source = ClaudeCodeTranscriptSource(args.claude_root)
+
+        def ingest(request):
+            return ingest_claude_code_transcript(request, endpoint=args.endpoint)
+
+        return source, ingest
+
+    parser.error(
+        f"unsupported --source {args.source!r}; supported: fake, codex, claude-code"
+    )
 
 
 def _print_summary(summary: dict[str, object]) -> None:

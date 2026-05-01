@@ -106,6 +106,9 @@ def jsonl_to_spans(path: Path) -> list[Span]:
         [root, *spans],
         agent_source="claude-code",
         agent_family="claude-code",
+        agent_surface=entrypoint
+        if isinstance(entrypoint, str) and entrypoint
+        else None,
     )
 
 
@@ -141,6 +144,11 @@ def _ts_ns(ts: str | None) -> int | None:
 
 def _trace_id(session_id: str) -> str:
     return hashlib.sha256(f"claude-code:{session_id}".encode()).hexdigest()[:32]
+
+
+def trace_id_for_session(session_id: str) -> str:
+    """Return the deterministic Claude Code trace id for a transcript session."""
+    return _trace_id(session_id)
 
 
 def _span_id(session_id: str, suffix: str) -> str:

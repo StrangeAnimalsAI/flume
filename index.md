@@ -15,6 +15,20 @@ This repo replaces the ad-hoc JSONL parser at `crypto-analysis/scripts/analyze_s
 
 The confidence check: recomputing every metric from `analyze_sessions.py` against Langfuse data must match the local-parse numbers for the same session. Until parity holds, trust the JSONL.
 
+## Claude Code Auto-Ingest
+
+Claude Code CLI and desktop sessions write canonical transcript JSONL files under `~/.claude/projects/**/*.jsonl`, including sidechain/subagent transcripts nested below a session directory. These files are the replay source for Claude transcript structure, timing, token usage, tool calls, cwd, version, git branch, and the exposed `entrypoint` surface such as `cli` or `claude-desktop`.
+
+Use the auto-ingest CLI to discover quiet Claude Code transcript files and checkpoint their state before exporting:
+
+```bash
+agent-telemetry-auto-ingest --source claude-code --once --dry-run
+```
+
+Dry-run mode lists pending or skipped Claude Code files with session id, trace id, path, mtime, fingerprint, entrypoint metadata, and reason without writing to Langfuse. Real ingest reuses the existing Claude Code JSONL backfill mapper and OTLP exporter, preserving the `claude_code.interaction`, `claude_code.llm_request`, and `claude_code.tool` vocabulary plus Langfuse source metadata/tags. Pass one or more `--claude-root` values for fixture/custom roots; by default discovery walks `~/.claude/projects`.
+
+This canonical JSONL ingest is separate from native live Claude OTel. Use it when transcript-level grouping and deterministic replay matter. The live path still goes through the local Collector, but live Claude grouping fixes and launchd/Docker sidecar packaging are intentionally outside this auto-ingest path.
+
 ## Codex Auto-Ingest
 
 Codex CLI, Desktop, and IDE sessions write canonical rollout JSONL files under `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; archived sessions live under `~/.codex/archived_sessions/*.jsonl`. These rollout files are the canonical source for Codex prompt, transcript, tool-call, token, timing, cwd, model, and source-surface data.

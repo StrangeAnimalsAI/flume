@@ -108,9 +108,11 @@ def test_root_span_covers_whole_session(tmp_path: Path) -> None:
     assert root["attributes"]["source"] == "claude-code"
     assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "claude-code"
     assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "claude-code"
+    assert root["attributes"]["langfuse.trace.metadata.agent_surface"] == "cli"
     assert root["attributes"]["langfuse.trace.tags"] == [
         "agent:claude-code",
         "family:claude-code",
+        "surface:cli",
     ]
     # Root covers the retroactively shifted first turn and the session tail.
     assert root["start_unix_nano"] < root["end_unix_nano"]
