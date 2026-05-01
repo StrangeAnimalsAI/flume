@@ -7,6 +7,11 @@ import sys
 import time
 from pathlib import Path
 
+from agent_telemetry.ingest.codex import (
+    DEFAULT_CODEX_ARCHIVED_ROOT,
+    CodexRolloutSource,
+    ingest_codex_rollout,
+)
 from agent_telemetry.ingest.fake import FakeTranscriptSource, fake_ingest
 from agent_telemetry.ingest.runner import IngestFunction, run_once
 from agent_telemetry.ingest.state import SqliteIngestStateStore
@@ -50,12 +55,36 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         default="fake",
-        help="Source adapter to use. Currently supported: fake.",
+        help="Source adapter to use. Currently supported: fake, codex.",
     )
     parser.add_argument(
         "--fake-root",
         type=Path,
         help="Fixture directory for --source fake.",
+    )
+    parser.add_argument(
+        "--codex-root",
+        action="append",
+        type=Path,
+        help=(
+            "Codex sessions root, rollout file, or fixture root. May be "
+            "provided more than once. Defaults to ~/.codex/sessions."
+        ),
+    )
+    parser.add_argument(
+        "--include-archived-codex",
+        action="store_true",
+        help="Also discover ~/.codex/archived_sessions/*.jsonl for --source codex.",
+    )
+    parser.add_argument(
+        "--codex-archived-root",
+        type=Path,
+        help="Archived Codex sessions root for tests or custom layouts.",
+    )
+    parser.add_argument(
+        "--endpoint",
+        default="http://localhost:4318/v1/traces",
+        help="OTLP-HTTP traces endpoint for real ingest (default: %(default)s).",
     )
     parser.add_argument(
         "--state-db",
@@ -98,11 +127,26 @@ def _source_and_ingest(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> tuple[TranscriptSource, IngestFunction]:
-    if args.source != "fake":
-        parser.error(f"unsupported --source {args.source!r}; supported: fake")
-    if args.fake_root is None:
-        parser.error("--fake-root is required for --source fake")
-    return FakeTranscriptSource(args.fake_root), fake_ingest
+    if args.source == "fake":
+        if args.fake_root is None:
+            parser.error("--fake-root is required for --source fake")
+        return FakeTranscriptSource(args.fake_root), fake_ingest
+
+    if args.source == "codex":
+        source = CodexRolloutSource(
+            args.codex_root,
+            include_archived=args.include_archived_codex,
+            archived_root=args.codex_archived_root
+            if args.codex_archived_root is not None
+            else DEFAULT_CODEX_ARCHIVED_ROOT,
+        )
+
+        def ingest(request):
+            return ingest_codex_rollout(request, endpoint=args.endpoint)
+
+        return source, ingest
+
+    parser.error(f"unsupported --source {args.source!r}; supported: fake, codex")
 
 
 def _print_summary(summary: dict[str, object]) -> None:

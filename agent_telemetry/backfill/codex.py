@@ -358,6 +358,11 @@ def _trace_id(session_id: str) -> str:
     return hashlib.sha256(f"codex:{session_id}".encode()).hexdigest()[:32]
 
 
+def trace_id_for_session(session_id: str) -> str:
+    """Return the deterministic Codex trace id used by the rollout mapper."""
+    return _trace_id(session_id)
+
+
 def _span_id(session_id: str, suffix: str) -> str:
     return hashlib.sha256(
         f"codex:{session_id}:{suffix}".encode()

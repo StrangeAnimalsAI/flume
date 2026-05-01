@@ -1,11 +1,13 @@
 """Durable sqlite state for transcript auto-ingest."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from agent_telemetry.ingest.fingerprint import FileFingerprint
 from agent_telemetry.ingest.types import DiscoveredTranscript
@@ -29,6 +31,7 @@ class IngestRecord:
     mtime_ns: int
     session_id: str | None
     trace_id: str | None
+    metadata: dict[str, Any]
     first_seen_at: str
     last_seen_at: str
     last_ingested_at: str | None
@@ -106,9 +109,9 @@ class SqliteIngestStateStore:
                 """
                 INSERT INTO transcript_ingest_state (
                     source_type, path, fingerprint, sha256, size_bytes, mtime_ns,
-                    session_id, trace_id, first_seen_at, last_seen_at,
+                    session_id, trace_id, metadata_json, first_seen_at, last_seen_at,
                     last_ingested_at, status, error, attempts, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, 0, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, 0, ?)
                 """,
                 (
                     transcript.source_type,
@@ -119,6 +122,7 @@ class SqliteIngestStateStore:
                     fingerprint.mtime_ns,
                     transcript.session_id,
                     transcript.trace_id,
+                    _json_metadata(dict(transcript.metadata)),
                     ts,
                     ts,
                     IngestStatus.PENDING.value,
@@ -130,7 +134,7 @@ class SqliteIngestStateStore:
                 """
                 UPDATE transcript_ingest_state
                 SET fingerprint = ?, sha256 = ?, size_bytes = ?, mtime_ns = ?,
-                    session_id = ?, trace_id = ?, last_seen_at = ?,
+                    session_id = ?, trace_id = ?, metadata_json = ?, last_seen_at = ?,
                     status = ?, error = NULL, attempts = 0, updated_at = ?
                 WHERE source_type = ? AND path = ?
                 """,
@@ -141,6 +145,7 @@ class SqliteIngestStateStore:
                     fingerprint.mtime_ns,
                     transcript.session_id,
                     transcript.trace_id,
+                    _json_metadata(dict(transcript.metadata)),
                     ts,
                     IngestStatus.PENDING.value,
                     ts,
@@ -155,7 +160,7 @@ class SqliteIngestStateStore:
                 SET sha256 = ?, size_bytes = ?, mtime_ns = ?,
                     session_id = COALESCE(session_id, ?),
                     trace_id = COALESCE(trace_id, ?),
-                    last_seen_at = ?, updated_at = ?
+                    metadata_json = ?, last_seen_at = ?, updated_at = ?
                 WHERE source_type = ? AND path = ?
                 """,
                 (
@@ -164,6 +169,7 @@ class SqliteIngestStateStore:
                     fingerprint.mtime_ns,
                     transcript.session_id,
                     transcript.trace_id,
+                    _json_metadata(dict(transcript.metadata)),
                     ts,
                     ts,
                     transcript.source_type,
@@ -267,6 +273,7 @@ class SqliteIngestStateStore:
                 mtime_ns INTEGER NOT NULL,
                 session_id TEXT,
                 trace_id TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
                 first_seen_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL,
                 last_ingested_at TEXT,
@@ -278,6 +285,19 @@ class SqliteIngestStateStore:
             )
             """
         )
+        columns = {
+            row["name"]
+            for row in self._conn.execute(
+                "PRAGMA table_info(transcript_ingest_state)"
+            ).fetchall()
+        }
+        if "metadata_json" not in columns:
+            self._conn.execute(
+                """
+                ALTER TABLE transcript_ingest_state
+                ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'
+                """
+            )
         self._conn.execute(
             """
             CREATE INDEX IF NOT EXISTS transcript_ingest_state_status_idx
@@ -295,6 +315,20 @@ def _iso(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
+def _json_metadata(metadata: dict[str, Any]) -> str:
+    return json.dumps(metadata, sort_keys=True)
+
+
+def _metadata(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
 def _record(row: sqlite3.Row) -> IngestRecord:
     return IngestRecord(
         source_type=row["source_type"],
@@ -305,6 +339,7 @@ def _record(row: sqlite3.Row) -> IngestRecord:
         mtime_ns=row["mtime_ns"],
         session_id=row["session_id"],
         trace_id=row["trace_id"],
+        metadata=_metadata(row["metadata_json"]),
         first_seen_at=row["first_seen_at"],
         last_seen_at=row["last_seen_at"],
         last_ingested_at=row["last_ingested_at"],

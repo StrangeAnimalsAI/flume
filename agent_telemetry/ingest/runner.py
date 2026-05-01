@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +36,12 @@ class IngestAction:
     action: str
     status: str
     fingerprint: str | None = None
+    mtime_ns: int | None = None
+    mtime: str | None = None
+    size_bytes: int | None = None
     session_id: str | None = None
     trace_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,8 +51,12 @@ class IngestAction:
             "action": self.action,
             "status": self.status,
             "fingerprint": self.fingerprint,
+            "mtime_ns": self.mtime_ns,
+            "mtime": self.mtime,
+            "size_bytes": self.size_bytes,
             "session_id": self.session_id,
             "trace_id": self.trace_id,
+            "metadata": self.metadata,
             "reason": self.reason,
         }
 
@@ -113,8 +122,12 @@ def run_once(
                     action="skip_active",
                     status=IngestStatus.ACTIVE.value,
                     fingerprint=fingerprint.identity,
+                    mtime_ns=fingerprint.mtime_ns,
+                    mtime=_mtime_iso(fingerprint),
+                    size_bytes=fingerprint.size_bytes,
                     session_id=transcript.session_id,
                     trace_id=transcript.trace_id,
+                    metadata=dict(transcript.metadata),
                     reason=reason,
                 )
             )
@@ -132,8 +145,12 @@ def run_once(
                     action="skip_unchanged",
                     status=IngestStatus.INGESTED.value,
                     fingerprint=fingerprint.identity,
+                    mtime_ns=fingerprint.mtime_ns,
+                    mtime=_mtime_iso(fingerprint),
+                    size_bytes=fingerprint.size_bytes,
                     session_id=record.session_id,
                     trace_id=record.trace_id,
+                    metadata=record.metadata,
                     reason="fingerprint already ingested",
                 )
             )
@@ -147,8 +164,12 @@ def run_once(
                     action="would_ingest",
                     status=(record.status.value if record else IngestStatus.PENDING.value),
                     fingerprint=fingerprint.identity,
+                    mtime_ns=fingerprint.mtime_ns,
+                    mtime=_mtime_iso(fingerprint),
+                    size_bytes=fingerprint.size_bytes,
                     session_id=transcript.session_id,
                     trace_id=transcript.trace_id,
+                    metadata=dict(transcript.metadata),
                     reason="dry-run",
                 )
             )
@@ -171,8 +192,12 @@ def run_once(
                     action="failed",
                     status=IngestStatus.FAILED.value,
                     fingerprint=fingerprint.identity,
+                    mtime_ns=fingerprint.mtime_ns,
+                    mtime=_mtime_iso(fingerprint),
+                    size_bytes=fingerprint.size_bytes,
                     session_id=transcript.session_id,
                     trace_id=transcript.trace_id,
+                    metadata=dict(transcript.metadata),
                     reason=error,
                 )
             )
@@ -191,8 +216,12 @@ def run_once(
                 action="ingested",
                 status=IngestStatus.INGESTED.value,
                 fingerprint=fingerprint.identity,
+                mtime_ns=fingerprint.mtime_ns,
+                mtime=_mtime_iso(fingerprint),
+                size_bytes=fingerprint.size_bytes,
                 session_id=updated.session_id,
                 trace_id=updated.trace_id,
+                metadata=updated.metadata,
             )
         )
 
@@ -217,3 +246,10 @@ def _summarize(
         would_ingest=sum(1 for action in actions if action.action == "would_ingest"),
         actions=actions,
     )
+
+
+def _mtime_iso(fingerprint: FileFingerprint) -> str:
+    return datetime.fromtimestamp(
+        fingerprint.mtime_seconds,
+        tz=timezone.utc,
+    ).isoformat()
