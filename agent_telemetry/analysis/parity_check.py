@@ -466,6 +466,46 @@ def diff_reports(local: dict[str, Any], lf: dict[str, Any]) -> list[DiffRow]:
     return rows
 
 
+def stale_ingest_diagnostics(local: dict[str, Any], lf: dict[str, Any]) -> list[str]:
+    """Return operator hints for known Langfuse first-write-wins drift shapes."""
+
+    def timestamp_delta_ms(a: Any, b: Any) -> float | None:
+        left = _parse_iso(a)
+        right = _parse_iso(b)
+        if left is None or right is None:
+            return None
+        return abs((left - right).total_seconds() * 1000.0)
+
+    messages: list[str] = []
+    for metric in ("first_ts", "last_ts"):
+        local_value = local.get(metric)
+        lf_value = lf.get(metric)
+        if local_value == lf_value:
+            continue
+        delta_ms = timestamp_delta_ms(local_value, lf_value)
+        if delta_ms is not None and 0 < delta_ms <= 1.0:
+            messages.append(
+                f"{metric} differs by {delta_ms:.3f} ms; this matches the "
+                "pre-INT-436 float timestamp drift that Langfuse can retain "
+                "after deterministic re-ingest."
+            )
+            continue
+        if local_value and lf_value is None:
+            messages.append(
+                f"{metric} is present locally but missing from Langfuse; this "
+                "can happen when an older observation with the same span ID "
+                "won first write before the mapper emitted that field."
+            )
+
+    if messages:
+        messages.append(
+            "Suggested local-dev reconciliation: delete this single Langfuse "
+            "trace with `python -m agent_telemetry.analysis.langfuse_trace_reconcile "
+            "<trace-id> --yes`, then rerun the backfill for the source file."
+        )
+    return messages
+
+
 def format_diff(rows: Iterable[DiffRow]) -> str:
     rows = list(rows)
     name_w = max((len(r.metric) for r in rows), default=10)
@@ -565,6 +605,11 @@ def _cli(argv: list[str] | None = None) -> int:
 
     rows, _local, _lf = run_parity(args.jsonl, args.trace_id, creds)
     print(format_diff(rows))
+    diagnostics = stale_ingest_diagnostics(_local, _lf)
+    if diagnostics:
+        print("\nDiagnostics:")
+        for diagnostic in diagnostics:
+            print(f"- {diagnostic}")
     drifts = [r for r in rows if not r.ok]
     if drifts:
         print(f"\n{len(drifts)} metric(s) drifted.")

@@ -19,6 +19,7 @@ from agent_telemetry.analysis.parity_check import (
     _load_analyze_sessions,
     diff_reports,
     reconstruct_report,
+    stale_ingest_diagnostics,
 )
 
 
@@ -222,3 +223,43 @@ def test_langfuse_attrs_coerced_from_strings(tmp_path: Path) -> None:
     assert lf["tokens"]["input"] == 12  # 10 + 2
     assert lf["tokens"]["output"] == 27  # 20 + 7
     assert lf["by_tool"]["Read"]["total_result_chars"] == 100
+
+
+def test_stale_ingest_diagnostic_flags_one_ms_timestamp_drift() -> None:
+    diagnostics = stale_ingest_diagnostics(
+        {
+            "first_ts": "2026-04-20T10:00:00.827Z",
+            "last_ts": "2026-04-20T10:00:03.010Z",
+        },
+        {
+            "first_ts": "2026-04-20T10:00:00.826Z",
+            "last_ts": "2026-04-20T10:00:03.010Z",
+        },
+    )
+
+    assert any("first_ts differs by 1.000 ms" in d for d in diagnostics)
+    assert any("langfuse_trace_reconcile" in d for d in diagnostics)
+
+
+def test_stale_ingest_diagnostic_flags_missing_langfuse_end_time() -> None:
+    diagnostics = stale_ingest_diagnostics(
+        {
+            "first_ts": "2026-04-20T10:00:00.000Z",
+            "last_ts": "2026-04-20T10:00:03.010Z",
+        },
+        {"first_ts": "2026-04-20T10:00:00.000Z", "last_ts": None},
+    )
+
+    assert any(
+        "last_ts is present locally but missing from Langfuse" in d
+        for d in diagnostics
+    )
+
+
+def test_stale_ingest_diagnostic_ignores_non_timestamp_drift() -> None:
+    diagnostics = stale_ingest_diagnostics(
+        {"first_ts": "2026-04-20T10:00:00.000Z", "tokens": {"input": 10}},
+        {"first_ts": "2026-04-20T10:00:00.000Z", "tokens": {"input": 999}},
+    )
+
+    assert diagnostics == []

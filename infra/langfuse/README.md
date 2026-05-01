@@ -123,6 +123,43 @@ crash on 4xx/5xx. To see the response code explicitly, re-run with
 `OTEL_PYTHON_LOG_LEVEL=debug` and a Python `logging.basicConfig(level=DEBUG)`
 shim — urllib3 will log the `POST .../v1/traces HTTP/1.1 200 898` line.
 
+## Reconcile a stale deterministic trace
+
+Langfuse ingestion is first-write-wins for deterministic trace/observation
+IDs in this local stack. Replaying the same backfill after a mapper fix is
+idempotent for new data, but it does not reliably update already-ingested
+observation fields such as `startTime` and `endTime`. INT-455 reproduced this
+with a Claude Code trace first written by the pre-INT-436 timestamp mapper:
+the fixed backfill emitted `.827Z`, while the existing Langfuse observation
+kept the older `.826Z` value.
+
+Do not wipe the whole local Langfuse database for this. Delete just the stale
+trace, then rerun the deterministic backfill for the original source file:
+
+```bash
+# Dry-run: prints the trace name, timestamp, and observation count.
+uv run python -m agent_telemetry.analysis.langfuse_trace_reconcile \
+  e08b95ad6fd560012ff085a57be21609
+
+# Delete exactly that trace from local Langfuse.
+uv run python -m agent_telemetry.analysis.langfuse_trace_reconcile \
+  e08b95ad6fd560012ff085a57be21609 --yes
+
+# Recreate it from the fixed mapper.
+uv run python -m agent_telemetry.backfill.claude_code \
+  --path ~/.claude/projects/<project>/<session>.jsonl \
+  --endpoint http://localhost:3000/api/public/otel/v1/traces
+```
+
+The helper defaults to `http://localhost:3000`, reads credentials from
+`infra/langfuse/.env`, refuses non-local URLs unless explicitly overridden,
+uses a trace-scoped ClickHouse mutation against the local
+`langfuse-clickhouse-1` container, and verifies the trace is missing after
+deletion. The public trace DELETE endpoint alone is not enough in this stack:
+the trace can still be reconstructed from ClickHouse observation rows. The
+parity checker also prints a stale-ingest diagnostic when only known timestamp
+fields look like old first-write data.
+
 ## Operations
 
 ```bash
