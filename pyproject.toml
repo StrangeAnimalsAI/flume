@@ -14,6 +14,9 @@ dependencies = [
     "httpx>=0.28.1,<0.29",
 ]
 
+[project.scripts]
+agent-telemetry-auto-ingest = "agent_telemetry.ingest.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["agent_telemetry"]
 
