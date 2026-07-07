@@ -23,6 +23,11 @@ from typing import Any
 
 from agent_telemetry.backfill.claude_code import jsonl_to_spans
 from agent_telemetry.backfill.codex import rollout_to_spans
+from agent_telemetry.harness.adapter import (
+    extract_harness_contents,
+    harness_to_spans,
+    probe_harness,
+)
 from agent_telemetry.store.base import ContentRow
 from agent_telemetry.store.extract import (
     extract_claude_contents,
@@ -151,5 +156,14 @@ register(
         map_spans=rollout_to_spans,
         extract_contents=extract_codex_contents,
         probe=probe_codex,
+    )
+)
+register(
+    SourceAdapter(
+        name="harness",
+        vendor="anthropic",
+        map_spans=harness_to_spans,
+        extract_contents=extract_harness_contents,
+        probe=probe_harness,
     )
 )

@@ -49,8 +49,10 @@ def _write_session(tmp_path: Path, session_id: str = "sess-1", extra: str = "") 
 
 def test_adapter_resolves_by_name_and_vendor() -> None:
     assert get_adapter("claude-code").vendor == "anthropic"
-    assert get_adapter("anthropic").name == "claude-code"
     assert get_adapter("openai").name == "codex"
+    # Two anthropic-vendor sources (claude-code, harness): alias is ambiguous.
+    with pytest.raises(ValueError, match="ambiguous"):
+        get_adapter("anthropic")
     with pytest.raises(ValueError, match="unknown source"):
         get_adapter("gemini")
 
@@ -87,7 +89,7 @@ def test_ingest_path_archives_raw(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        outcome = ingest_path(store, "anthropic", src, archive=archive)  # vendor alias
+        outcome = ingest_path(store, "claude-code", src, archive=archive)
         assert outcome is not None and outcome.session_id == "sess-1"
         assert len(archive.versions("sess-1")) == 1
         assert archive.stats()[0]["source"] == "claude-code"

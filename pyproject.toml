@@ -12,12 +12,14 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.28",
     "langfuse==4.5.1",
     "httpx>=0.28.1,<0.29",
+    "anthropic>=0.92",
 ]
 
 [project.scripts]
 agent-telemetry-auto-ingest = "agent_telemetry.ingest.cli:main"
 agent-telemetry-analyze = "agent_telemetry.store.cli:main"
 agent-telemetry-serve = "agent_telemetry.store.server:main"
+agent-telemetry-harness = "agent_telemetry.harness.agent:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_telemetry"]
