@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     thinking_chars INTEGER,
     first_user_message TEXT,
     file_path TEXT,
+    raw_sha256 TEXT,
+    pipeline_version INTEGER,
     ingested_at_ns INTEGER,
     metadata TEXT
 );
@@ -157,10 +159,15 @@ class SqliteSessionStore(SessionStore):
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(sessions)").fetchall()
         }
-        wanted = {
+        hierarchy = {
             "project": "TEXT",
             "is_subagent": "INTEGER DEFAULT 0",
             "parent_session_id": "TEXT",
+        }
+        wanted = {
+            **hierarchy,
+            "raw_sha256": "TEXT",
+            "pipeline_version": "INTEGER",
         }
         missing = {k: v for k, v in wanted.items() if k not in existing}
         with self._conn:
@@ -168,7 +175,10 @@ class SqliteSessionStore(SessionStore):
                 self._conn.execute(
                     f"ALTER TABLE sessions ADD COLUMN {column} {decl}"
                 )
-        return bool(missing)
+        # Backfill only when hierarchy columns were newly added: it
+        # recomputes parent links from paths, which would clobber probe-
+        # derived parents (codex) on an unrelated migration.
+        return bool(missing.keys() & hierarchy.keys())
 
     def _backfill_hierarchy(self) -> None:
         from agent_telemetry.store.bundle import derive_project
@@ -243,9 +253,13 @@ class SqliteSessionStore(SessionStore):
     # -- read -------------------------------------------------------------
 
     def overview(self) -> dict[str, Any]:
+        from agent_telemetry.store.bundle import PIPELINE_VERSION
+
         totals = self._one(
             """
             SELECT COUNT(*) AS sessions,
+                   COALESCE(SUM(pipeline_version IS NULL
+                                OR pipeline_version < ?), 0) AS stale_sessions,
                    COALESCE(SUM(turn_count), 0) AS turns,
                    COALESCE(SUM(tool_call_count), 0) AS tool_calls,
                    COALESCE(SUM(thinking_blocks), 0) AS thinking_blocks,
@@ -258,7 +272,8 @@ class SqliteSessionStore(SessionStore):
                    MIN(started_at_ns) AS first_started_at_ns,
                    MAX(ended_at_ns) AS last_ended_at_ns
             FROM sessions
-            """
+            """,
+            (PIPELINE_VERSION,),
         )
         by_source = self._all(
             """
@@ -627,6 +642,29 @@ class SqliteSessionStore(SessionStore):
             """,
             (*params, limit),
         )
+
+    def stale_sessions(
+        self,
+        current_version: int,
+        *,
+        source: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT session_id, source, file_path, raw_sha256,
+                   pipeline_version, metadata
+            FROM sessions
+            WHERE pipeline_version IS NULL OR pipeline_version < ?
+        """
+        params: list[Any] = [current_version]
+        if source:
+            sql += " AND source = ?"
+            params.append(source)
+        sql += " ORDER BY started_at_ns DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return self._all(sql, tuple(params))
 
     def prune_sessions(
         self,

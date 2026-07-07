@@ -15,6 +15,11 @@ from agent_telemetry.store.base import ContentRow, SessionBundle
 
 Span = dict[str, Any]
 
+# Provenance stamp written to every session row. Bump whenever backfill/*,
+# store/extract.py, or this module change what they derive from raw bytes;
+# `agent-telemetry-analyze rebuild --stale` then re-ingests older rows.
+PIPELINE_VERSION = 1
+
 _ARGS_PREVIEW_MAX = 500
 
 
@@ -24,6 +29,7 @@ def bundle_from_spans(
     contents: list[ContentRow],
     file_path: Path,
     metadata: dict[str, Any] | None = None,
+    raw_sha256: str | None = None,
 ) -> SessionBundle | None:
     """Turn one session's span dicts into relational rows."""
     root = next(
@@ -96,6 +102,8 @@ def bundle_from_spans(
         "thinking_chars": sum(len(c.text) for c in thinking_rows),
         "first_user_message": _first_user_message(contents),
         "file_path": str(file_path),
+        "raw_sha256": raw_sha256,
+        "pipeline_version": PIPELINE_VERSION,
         "ingested_at_ns": time.time_ns(),
         "metadata": json.dumps(meta, sort_keys=True) if meta else None,
     }

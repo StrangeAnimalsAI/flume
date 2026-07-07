@@ -194,6 +194,21 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--archive-url", default=None)
     p.set_defaults(func=_cmd_ingest)
 
+    p = sub.add_parser(
+        "rebuild",
+        help="Re-ingest sessions built by an older pipeline (from raw archive).",
+    )
+    p.add_argument(
+        "--stale",
+        action="store_true",
+        help="Rebuild sessions whose pipeline_version is behind (required).",
+    )
+    p.add_argument("--source")
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--archive-url", default=None)
+    p.set_defaults(func=_cmd_rebuild)
+
     p = sub.add_parser("sources", help="List registered source adapters.")
     p.set_defaults(func=_cmd_sources)
 
@@ -438,6 +453,22 @@ def _cmd_ingest(store, args) -> dict[str, Any]:
         "failed": failures,
         "raw_archived": not args.no_raw_archive,
     }
+
+
+def _cmd_rebuild(store, args) -> dict[str, Any]:
+    from agent_telemetry.store.archive import open_archive
+    from agent_telemetry.store.ingest import rebuild_stale
+
+    if not args.stale:
+        raise SystemExit("rebuild requires --stale (the only mode implemented)")
+    with open_archive(args.archive_url) as archive:
+        return rebuild_stale(
+            store,
+            archive,
+            source=args.source,
+            limit=args.limit,
+            dry_run=args.dry_run,
+        )
 
 
 def _cmd_sources(store, args) -> list[dict[str, Any]]:

@@ -224,6 +224,18 @@ class SessionStore(ABC):
         """Stored findings, most severe first, then by metric."""
 
     @abstractmethod
+    def stale_sessions(
+        self,
+        current_version: int,
+        *,
+        source: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Sessions whose `pipeline_version` is NULL or behind
+        `current_version`, newest first — rows built by older mapper/
+        extractor logic that `rebuild --stale` should re-ingest."""
+
+    @abstractmethod
     def prune_sessions(
         self,
         *,

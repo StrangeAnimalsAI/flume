@@ -15,13 +15,16 @@ the mapper cannot handle yet is preserved durably.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
 from agent_telemetry.ingest.runner import IngestOutcome, IngestRequest
 from agent_telemetry.store.archive import RawArchive
 from agent_telemetry.store.base import SessionStore
-from agent_telemetry.store.bundle import bundle_from_spans
+from agent_telemetry.store.bundle import PIPELINE_VERSION, bundle_from_spans
 from agent_telemetry.store.registry import get_adapter
 
 
@@ -56,7 +59,11 @@ def ingest_path(
         return None
     contents = adapter.extract_contents(path, session_id)
     bundle = bundle_from_spans(
-        spans, contents=contents, file_path=path, metadata=metadata
+        spans,
+        contents=contents,
+        file_path=path,
+        metadata=metadata,
+        raw_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
     )
     if bundle is None:
         return None
@@ -103,3 +110,70 @@ def store_ingest_function(
         return outcome
 
     return ingest
+
+
+def rebuild_stale(
+    store: SessionStore,
+    archive: RawArchive,
+    *,
+    source: str | None = None,
+    limit: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Re-ingest sessions whose rows were built by an older pipeline.
+
+    Bytes come from the original file when it still exists, else from the
+    latest raw-archive version — so a rebuild works even after the vendor
+    app pruned its transcripts. The session's stored metadata is replayed,
+    preserving probe results (parent links, cwd) that a restored temp file
+    could not re-derive."""
+    stale = store.stale_sessions(PIPELINE_VERSION, source=source, limit=limit)
+    if dry_run:
+        return {
+            "pipeline_version": PIPELINE_VERSION,
+            "stale": len(stale),
+            "dry_run": True,
+            "sessions": [row["session_id"] for row in stale],
+        }
+    rebuilt: list[str] = []
+    from_original = from_archive = 0
+    missing_raw: list[str] = []
+    failed: list[dict[str, str]] = []
+    for row in stale:
+        session_id = row["session_id"]
+        metadata = json.loads(row["metadata"]) if row.get("metadata") else None
+        if not row.get("source"):
+            failed.append({"session_id": session_id, "error": "no source recorded"})
+            continue
+        try:
+            original = Path(row["file_path"]) if row.get("file_path") else None
+            if original is not None and original.is_file():
+                ingest_path(store, row["source"], original, metadata, archive=archive)
+                from_original += 1
+            else:
+                versions = archive.versions(session_id)
+                if not versions:
+                    missing_raw.append(session_id)
+                    continue
+                entry = versions[-1]
+                with tempfile.TemporaryDirectory() as tmp:
+                    # Keep the original filename: session_id fallback and
+                    # source probes key off the path's stem/shape.
+                    name = Path(entry.original_path).name or f"{session_id}.jsonl"
+                    restored = archive.restore(entry, Path(tmp) / name)
+                    ingest_path(store, row["source"], restored, metadata)
+                from_archive += 1
+            rebuilt.append(session_id)
+        except Exception as exc:  # noqa: BLE001 - keep the batch going
+            failed.append(
+                {"session_id": session_id, "error": f"{type(exc).__name__}: {exc}"}
+            )
+    return {
+        "pipeline_version": PIPELINE_VERSION,
+        "stale": len(stale),
+        "rebuilt": len(rebuilt),
+        "from_original": from_original,
+        "from_archive": from_archive,
+        "missing_raw": missing_raw,
+        "failed": failed,
+    }
