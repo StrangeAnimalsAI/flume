@@ -147,6 +147,109 @@ def test_harness_transcript_ingests_with_thinking(tmp_path: Path) -> None:
     assert results[0]["text"].strip() == "retention"
 
 
+# -- SDK backend --------------------------------------------------------------
+# Duck-typed stand-ins: the backend dispatches on type names, so these
+# mirror the claude-agent-sdk message/block classes without importing it.
+
+
+class ThinkingBlock(SimpleNamespace):
+    pass
+
+
+class TextBlock(SimpleNamespace):
+    pass
+
+
+class ToolUseBlock(SimpleNamespace):
+    pass
+
+
+class ToolResultBlock(SimpleNamespace):
+    pass
+
+
+class AssistantMessage(SimpleNamespace):
+    pass
+
+
+class UserMessage(SimpleNamespace):
+    pass
+
+
+class ResultMessage(SimpleNamespace):
+    pass
+
+
+def _sdk_stream_factory():
+    async def stream(prompt: str):
+        yield AssistantMessage(
+            model="claude-opus-4-8",
+            content=[
+                ThinkingBlock(thinking=THINKING_1),
+                ToolUseBlock(id="tu_1", name="Bash", input={"command": "ls"}),
+            ],
+        )
+        yield UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tu_1", content="README.md", is_error=False)
+            ]
+        )
+        yield AssistantMessage(
+            model="claude-opus-4-8",
+            content=[
+                ThinkingBlock(thinking=THINKING_2),
+                TextBlock(text="One file."),
+            ],
+        )
+        yield ResultMessage(
+            subtype="success",
+            usage={
+                "input_tokens": 300,
+                "output_tokens": 80,
+                "cache_read_input_tokens": 5000,
+                "cache_creation_input_tokens": 40,
+            },
+        )
+
+    return stream
+
+
+def _run_sdk(tmp_path: Path) -> Path:
+    import anyio
+
+    from agent_telemetry.harness.sdk_backend import run_sdk_session
+
+    async def go() -> Path:
+        return await run_sdk_session(
+            "what files are here?",
+            transcript_dir=tmp_path,
+            query_fn=lambda prompt: _sdk_stream_factory()(prompt),
+            echo=False,
+        )
+
+    return anyio.run(go)
+
+
+def test_sdk_backend_ingests_thinking_and_attributes_totals(tmp_path: Path) -> None:
+    path = _run_sdk(tmp_path)
+    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+        outcome = ingest_path(store, "harness", path)
+        assert outcome is not None
+        assert outcome.session_id.startswith("harness-")
+        session = store.get_session(outcome.session_id)
+        thinking = store.get_contents(outcome.session_id, kinds=["thinking"])
+
+    assert session is not None
+    assert session["source"] == "harness"
+    assert session["turn_count"] == 2
+    assert session["tool_call_count"] == 1
+    # Stream carries no per-turn usage; end totals land on the last turn.
+    assert session["input_tokens"] == 300
+    assert session["cache_read_tokens"] == 5000
+    assert [t["text"] for t in thinking] == [THINKING_1, THINKING_2]
+    assert session["tool_calls"][0]["name"] == "Bash"
+
+
 def test_adapter_resolves_and_probes(tmp_path: Path) -> None:
     adapter = get_adapter("harness")
     assert adapter.vendor == "anthropic"

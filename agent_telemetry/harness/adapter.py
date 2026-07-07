@@ -138,6 +138,29 @@ def harness_to_spans(path: Path) -> list[Span]:
                 },
             })
         turn_index += 1
+
+    # SDK backend: per-turn usage is unavailable on the stream; the run's
+    # totals ride on the end event. Attribute them to the last turn so
+    # session rollups stay correct.
+    turn_spans = [s for s in spans if s["name"] == "harness.llm_request"]
+    end_usage = next(
+        (e.get("usage") for e in events if e.get("type") == "end" and e.get("usage")),
+        None,
+    )
+    if turn_spans and end_usage:
+        keys = (
+            "input_tokens", "output_tokens",
+            "cache_read_input_tokens", "cache_creation_input_tokens",
+        )
+        recorded = sum(
+            s["attributes"].get(f"gen_ai.usage.{k}") or 0
+            for s in turn_spans for k in keys
+        )
+        if recorded == 0:
+            for key in keys:
+                turn_spans[-1]["attributes"][f"gen_ai.usage.{key}"] = (
+                    end_usage.get(key) or 0
+                )
     return spans
 
 

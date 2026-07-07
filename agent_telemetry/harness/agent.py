@@ -181,14 +181,24 @@ def main(argv: list[str] | None = None) -> int:
         description="Minimal traced agent: thinking summaries land in the store.",
     )
     parser.add_argument("prompt")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--backend", default="api", choices=("api", "sdk"),
+        help="api: raw Anthropic SDK, pay-per-token, bash tool only. "
+        "sdk: Agent SDK on the Claude plan login, full Claude Code tool suite.",
+    )
+    parser.add_argument("--model", default=None)
     parser.add_argument(
         "--effort", default=None,
         choices=("low", "medium", "high", "xhigh", "max"),
+        help="API backend only.",
     )
     parser.add_argument("--system", default=None)
     parser.add_argument("--max-turns", type=int, default=40)
     parser.add_argument("--max-tokens", type=int, default=16000)
+    parser.add_argument(
+        "--permission-mode", default=None,
+        help="SDK backend only (e.g. acceptEdits, bypassPermissions).",
+    )
     parser.add_argument("--transcript-dir", type=Path, default=DEFAULT_TRANSCRIPT_DIR)
     parser.add_argument(
         "--no-ingest", action="store_true",
@@ -196,15 +206,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    path = run_session(
-        args.prompt,
-        model=args.model,
-        effort=args.effort,
-        system=args.system,
-        max_turns=args.max_turns,
-        max_tokens=args.max_tokens,
-        transcript_dir=args.transcript_dir,
-    )
+    if args.backend == "sdk":
+        import anyio
+
+        from agent_telemetry.harness.sdk_backend import run_sdk_session
+
+        path = anyio.run(
+            lambda: run_sdk_session(
+                args.prompt,
+                model=args.model,
+                system=args.system,
+                max_turns=args.max_turns,
+                permission_mode=args.permission_mode,
+                transcript_dir=args.transcript_dir,
+            )
+        )
+    else:
+        path = run_session(
+            args.prompt,
+            model=args.model or DEFAULT_MODEL,
+            effort=args.effort,
+            system=args.system,
+            max_turns=args.max_turns,
+            max_tokens=args.max_tokens,
+            transcript_dir=args.transcript_dir,
+        )
     if not args.no_ingest:
         _ingest(path)
     return 0
