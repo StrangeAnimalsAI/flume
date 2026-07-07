@@ -208,6 +208,22 @@ class SessionStore(ABC):
         clustering (e.g. throwaway-script detection)."""
 
     @abstractmethod
+    def upsert_findings(self, findings: list[dict[str, Any]]) -> None:
+        """Persist insight findings. Rows are keyed by (kind, fingerprint):
+        a recurring finding updates last_seen/occurrences/metric on the
+        existing row instead of duplicating, so trends stay visible."""
+
+    @abstractmethod
+    def list_findings(
+        self,
+        *,
+        kind: str | None = None,
+        active_within_ns: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Stored findings, most severe first, then by metric."""
+
+    @abstractmethod
     def prune_sessions(
         self,
         *,

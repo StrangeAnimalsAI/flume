@@ -181,6 +181,12 @@ def _route(
             since_ns=_since_ns(_q(query, "since")),
             min_sessions=int(_q(query, "min_sessions") or 3),
         )
+    if path == "/api/insights":
+        if _q(query, "stored") == "1":
+            return store.list_findings(limit=int(_q(query, "limit") or 50))
+        from agent_telemetry.store.insights import run_insights
+
+        return run_insights(store, since_ns=_since_ns(_q(query, "since") or "7d"))
     if path == "/api/archive":
         from agent_telemetry.store.archive import open_archive
         from agent_telemetry.store.config import load_policy

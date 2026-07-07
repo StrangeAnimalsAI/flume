@@ -130,6 +130,19 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=25)
     p.set_defaults(func=_cmd_search)
 
+    p = sub.add_parser(
+        "insights",
+        help="Run gap detectors: tooling, process, and design opportunities.",
+    )
+    p.add_argument("--since", default="7d", help="Window like 24h, 7d, 30d.")
+    p.add_argument(
+        "--stored",
+        action="store_true",
+        help="List previously stored findings instead of re-running detectors.",
+    )
+    p.add_argument("--limit", type=int, default=25)
+    p.set_defaults(func=_cmd_insights)
+
     p = sub.add_parser("cost", help="Dollar cost of Claude usage (cache-aware).")
     p.add_argument("--since", help="Window like 24h, 7d, 30d.")
     p.add_argument(
@@ -277,6 +290,14 @@ def _cmd_search(store, args) -> list[dict[str, Any]]:
         source=args.source,
         limit=args.limit,
     )
+
+
+def _cmd_insights(store, args) -> list[dict[str, Any]]:
+    if args.stored:
+        return store.list_findings(limit=args.limit)
+    from agent_telemetry.store.insights import run_insights
+
+    return run_insights(store, since_ns=_since_ns(args.since))[: args.limit]
 
 
 # $/MTok (input, output). Cache read = 0.1x input; cache write = 1.25x input
@@ -596,6 +617,26 @@ def _render(command: str | None, result: Any) -> None:
         return
     if command == "tokens":
         _table(result)
+        return
+    if command == "insights":
+        sev_label = {1: "ACT NOW", 2: "WORTH FIXING", 3: "WATCH"}
+        current = None
+        for f in result:
+            if f["severity"] != current:
+                current = f["severity"]
+                print(f"\n== {sev_label.get(current, current)} ==")
+            trend = (
+                f"  (seen {f['occurrences']}x since "
+                f"{_ts(f['first_seen_ns'])[:10]})"
+                if f.get("occurrences", 1) > 1 else ""
+            )
+            print(f"\n  [{f['kind']}] {f['title']}{trend}")
+            if f.get("detail"):
+                print(f"      {f['detail']}")
+            if f.get("action"):
+                print(f"      -> {f['action']}")
+        if not result:
+            print("(no findings — corpus is clean for this window)")
         return
     if command == "cost":
         _table(

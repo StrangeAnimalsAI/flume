@@ -83,6 +83,22 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 CREATE INDEX IF NOT EXISTS idx_tools_session ON tool_calls (session_id, started_at_ns);
 CREATE INDEX IF NOT EXISTS idx_tools_name ON tool_calls (name);
 
+CREATE TABLE IF NOT EXISTS findings (
+    kind TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    severity INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    detail TEXT,
+    metric REAL,
+    unit TEXT,
+    action TEXT,
+    evidence TEXT,
+    first_seen_ns INTEGER NOT NULL,
+    last_seen_ns INTEGER NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (kind, fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS contents (
     id INTEGER PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -556,6 +572,61 @@ class SqliteSessionStore(SessionStore):
             sql += " AND c.text LIKE ?"
             params.append(like)
         return self._all(sql, tuple(params))
+
+    def upsert_findings(self, findings: list[dict[str, Any]]) -> None:
+        import time
+
+        now = time.time_ns()
+        with self._conn:
+            for f in findings:
+                self._conn.execute(
+                    """
+                    INSERT INTO findings (kind, fingerprint, severity, title,
+                        detail, metric, unit, action, evidence,
+                        first_seen_ns, last_seen_ns, occurrences)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ON CONFLICT (kind, fingerprint) DO UPDATE SET
+                        severity = excluded.severity,
+                        title = excluded.title,
+                        detail = excluded.detail,
+                        metric = excluded.metric,
+                        unit = excluded.unit,
+                        action = excluded.action,
+                        evidence = excluded.evidence,
+                        last_seen_ns = excluded.last_seen_ns,
+                        occurrences = occurrences + 1
+                    """,
+                    (
+                        f["kind"], f["fingerprint"], f["severity"], f["title"],
+                        f.get("detail"), f.get("metric"), f.get("unit"),
+                        f.get("action"), f.get("evidence"), now, now,
+                    ),
+                )
+
+    def list_findings(
+        self,
+        *,
+        kind: str | None = None,
+        active_within_ns: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        conditions, params = [], []
+        if kind:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if active_within_ns is not None:
+            import time
+
+            conditions.append("last_seen_ns >= ?")
+            params.append(time.time_ns() - active_within_ns)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        return self._all(
+            f"""
+            SELECT * FROM findings {where}
+            ORDER BY severity, metric DESC LIMIT ?
+            """,
+            (*params, limit),
+        )
 
     def prune_sessions(
         self,

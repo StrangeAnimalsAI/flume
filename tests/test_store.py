@@ -438,6 +438,64 @@ def test_audit_whole_file_reads(tmp_path: Path) -> None:
         assert store.audit_whole_file_reads(min_chars=100_000) == []
 
 
+def test_insights_detect_and_persist(tmp_path: Path) -> None:
+    from agent_telemetry.store.insights import run_insights
+
+    # Build a session with a byte-identical retry loop (6 identical calls).
+    events = _claude_events()[:1]
+    for i in range(6):
+        events.append(
+            {
+                "type": "assistant",
+                "uuid": f"asst-{i}",
+                "timestamp": f"2026-04-20T10:00:0{i + 1}.000Z",
+                "message": {
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"tu_{i}",
+                            "name": "FlakyTool",
+                            "input": {"q": "same"},
+                        }
+                    ],
+                },
+            }
+        )
+        events.append(
+            {
+                "type": "user",
+                "timestamp": f"2026-04-20T10:00:0{i + 1}.500Z",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": f"tu_{i}",
+                            "content": "identical result",
+                        }
+                    ]
+                },
+            }
+        )
+    path = tmp_path / "sess-flaky.jsonl"
+    _write_jsonl(path, events)
+
+    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+        ingest_path(store, "claude-code", path)
+        findings = run_insights(store)
+        kinds = {f["kind"] for f in findings}
+        assert "repeat_waste" in kinds
+        waste = next(f for f in findings if f["kind"] == "repeat_waste")
+        assert waste["fingerprint"] == "FlakyTool"
+        assert waste["metric"] == 5  # 6 calls, 5 wasted
+
+        # Re-run: same finding updates in place (occurrences bumps, no dup).
+        run_insights(store)
+        stored = store.list_findings(kind="repeat_waste")
+        assert len(stored) == 1
+        assert stored[0]["occurrences"] == 2
+
+
 def test_list_sessions_filters(tmp_path: Path) -> None:
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)

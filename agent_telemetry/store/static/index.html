@@ -78,8 +78,9 @@ const fmtDur = (ms) => ms == null ? "-" : ms < 1000 ? ms + "ms"
 const fmtNum = (n) => (n ?? 0).toLocaleString("en-US");
 
 const TABS = [
-  ["overview", "Overview"], ["sessions", "Sessions"], ["tools", "Tools"],
-  ["tokens", "Tokens"], ["audit", "Audit"], ["search", "Search"],
+  ["overview", "Overview"], ["insights", "Insights"], ["sessions", "Sessions"],
+  ["tools", "Tools"], ["tokens", "Tokens"], ["audit", "Audit"],
+  ["search", "Search"],
 ];
 
 function nav() {
@@ -102,6 +103,33 @@ function table(rows, cols) {
 
 const sessionLink = (id) =>
   `<a href="#/sessions/${encodeURIComponent(id)}">${esc(id.slice(0, 8))}…</a>`;
+
+async function viewInsights() {
+  const since = state.insightSince || "7d";
+  const findings = await api("/api/insights?since=" + since);
+  const picker = `
+    <div class="filters">
+      ${["24h", "7d", "30d"].map((w) =>
+        `<button onclick="state.insightSince='${w}';render()"
+           style="${w === since ? "border-color: var(--accent)" : ""}">${w}</button>`
+      ).join("")}
+      <span class="dim">detectors: toolgaps · repeat waste · error hotspots ·
+        context floods · idle-gap churn · marathons · premium grind ·
+        docnav adoption</span>
+    </div>`;
+  const sevName = {1: "act now", 2: "worth fixing", 3: "watch"};
+  const sevColor = {1: "var(--warn)", 2: "var(--accent)", 3: "var(--dim)"};
+  const blocks = findings.map((f) => [
+    `<div class="block" style="white-space:normal;border-left:3px solid ${sevColor[f.severity]}">`,
+    `<div class="meta"><span class="badge" style="color:${sevColor[f.severity]};border-color:${sevColor[f.severity]}">${sevName[f.severity]}</span> `,
+    `<span class="badge">${esc(f.kind)}</span>`,
+    f.occurrences > 1 ? ` <span class="dim">seen ${f.occurrences}x</span>` : "",
+    `</div><strong>${esc(f.title)}</strong>`,
+    `<div class="dim" style="margin:6px 0">${esc(f.detail ?? "")}</div>`,
+    `<div>&rarr; ${esc(f.action ?? "")}</div></div>`,
+  ].join("")).join("");
+  return picker + (blocks || `<p class="dim">(no findings in window)</p>`);
+}
 
 async function viewAudit() {
   const since = state.auditSince || "30d";
@@ -437,6 +465,7 @@ async function render() {
     else if (view === "sessions") main.innerHTML = await viewSessions();
     else if (view === "tools") main.innerHTML = await viewTools();
     else if (view === "tokens") main.innerHTML = await viewTokens();
+    else if (view === "insights") main.innerHTML = await viewInsights();
     else if (view === "audit") main.innerHTML = await viewAudit();
     else if (view === "search") main.innerHTML = await viewSearch();
     else main.innerHTML = `<p class="err">unknown view</p>`;

@@ -41,6 +41,7 @@ agent-telemetry-analyze thinking <session-id>          # full thought process
 agent-telemetry-analyze tools --since 7d               # repeats, slowest, largest
 agent-telemetry-analyze tokens --group-by model        # cache split preserved
 agent-telemetry-analyze search "navigat*" --kind thinking
+agent-telemetry-analyze insights --since 7d            # ranked gap findings + suggested actions
 agent-telemetry-analyze audit repeats --since 30d      # identical calls, byte-identical proof
 agent-telemetry-analyze audit bigreads --since 30d     # unranged whole-file Reads
 agent-telemetry-analyze audit toolgaps --since 12w     # recurring throwaway scripts
