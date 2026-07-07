@@ -496,6 +496,72 @@ def test_insights_detect_and_persist(tmp_path: Path) -> None:
         assert stored[0]["occurrences"] == 2
 
 
+def test_insights_schema_loop_detects_distinct_payload_retries(
+    tmp_path: Path,
+) -> None:
+    # A subagent rephrasing its StructuredOutput payload every attempt:
+    # never byte-identical (invisible to repeat_waste), but every attempt
+    # fails validation the same way.
+    from agent_telemetry.store.insights import run_insights
+
+    schema_error = (
+        "Output does not match required schema: "
+        "root: must have required property 'key_facts'"
+    )
+    events = _claude_events()[:1]
+    for i in range(12):
+        events.append(
+            {
+                "type": "assistant",
+                "uuid": f"asst-{i}",
+                "timestamp": f"2026-04-20T10:00:{i + 10:02d}.000Z",
+                "message": {
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"tu_{i}",
+                            "name": "StructuredOutput",
+                            "input": {"build_implication": f"attempt {i}"},
+                        }
+                    ],
+                },
+            }
+        )
+        events.append(
+            {
+                "type": "user",
+                "timestamp": f"2026-04-20T10:00:{i + 10:02d}.500Z",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": f"tu_{i}",
+                            "is_error": True,
+                            "content": schema_error,
+                        }
+                    ]
+                },
+            }
+        )
+    path = tmp_path / "sess-schema-loop.jsonl"
+    _write_jsonl(path, events)
+
+    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+        ingest_path(store, "claude-code", path)
+        findings = run_insights(store)
+
+    loops = [f for f in findings if f["kind"] == "schema_loop"]
+    assert len(loops) == 1
+    assert loops[0]["metric"] == 12
+    assert "key_facts" in loops[0]["detail"]
+    # Not byte-identical, so the repeat_waste detector must NOT claim it.
+    assert not any(
+        f["kind"] == "repeat_waste" and f["fingerprint"] == "StructuredOutput"
+        for f in findings
+    )
+
+
 def test_list_sessions_filters(tmp_path: Path) -> None:
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)

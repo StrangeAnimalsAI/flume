@@ -34,6 +34,7 @@ def run_insights(store, *, since_ns: int | None = None) -> list[Finding]:
     for detector in (
         _toolgaps,
         _repeat_waste,
+        _schema_loops,
         _error_hotspots,
         _context_floods,
         _idle_gap_churn,
@@ -102,6 +103,51 @@ def _repeat_waste(store, since_ns) -> list[Finding]:
             agg["calls"], "wasted calls",
             "Retry loop or schema mismatch — fix the calling prompt/schema, "
             "or add a PreToolUse repeat-guard hook.",
+        ))
+    return out
+
+
+def _schema_loops(store, since_ns) -> list[Finding]:
+    """Subagents grinding against a StructuredOutput schema they never satisfy.
+
+    Distinct from repeat_waste: each retry rephrases the payload (not
+    byte-identical), so only the validation-error count exposes the loop.
+    Root cause is usually an agent() prompt asking for different keys than
+    the attached schema requires — the subagent follows the prompt (INT-1282)."""
+    where, params = _since(since_ns)
+    rows = store._all(
+        f"""
+        SELECT s.project, COUNT(*) errors,
+               COUNT(DISTINCT t.session_id) sessions,
+               MAX(t.session_id) example_session
+        FROM tool_calls t JOIN sessions s USING (session_id)
+        {where} {"AND" if where else "WHERE"} t.name = 'StructuredOutput'
+            AND t.is_error = 1
+        GROUP BY s.project HAVING errors >= 10
+        ORDER BY errors DESC LIMIT 5
+        """, params)
+    out = []
+    for r in rows:
+        sample = store._one(
+            """
+            SELECT c.text FROM contents c
+            JOIN tool_calls t ON t.span_id = c.span_id
+            JOIN sessions s USING (session_id)
+            WHERE t.name = 'StructuredOutput' AND t.is_error = 1
+                AND c.kind = 'tool_result' AND s.project IS ?
+            ORDER BY c.ts_ns DESC LIMIT 1
+            """, (r["project"],)) or {}
+        out.append(_finding(
+            "schema_loop", r["project"] or "?",
+            1 if r["errors"] >= 50 else 2,
+            f"StructuredOutput schema loops in {r['project'] or '?'}: "
+            f"{r['errors']} validation failures across {r['sessions']} "
+            "subagent(s)",
+            f"Sample error: {(sample.get('text') or '')[:200]}",
+            r["errors"], "failed calls",
+            "Workflow agent() prompts must restate the schema's required "
+            "keys verbatim; the subagent writes to the prompt, not the "
+            "schema. Inspect: analyze show " + str(r["example_session"]),
         ))
     return out
 
