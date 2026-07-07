@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "analysis-ui",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "agent-telemetry-serve", "--port", "8321"],
+      "port": 8321
+    }
+  ]
+}

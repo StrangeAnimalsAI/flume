@@ -16,6 +16,8 @@ dependencies = [
 
 [project.scripts]
 agent-telemetry-auto-ingest = "agent_telemetry.ingest.cli:main"
+agent-telemetry-analyze = "agent_telemetry.store.cli:main"
+agent-telemetry-serve = "agent_telemetry.store.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_telemetry"]
