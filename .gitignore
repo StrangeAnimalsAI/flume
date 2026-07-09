@@ -19,3 +19,6 @@ infra/**/.env
 # repo-nav generated indexes (regenerate with `repo-nav index`)
 _docnav/
 .claude/settings.local.json
+
+# Stray linked worktree, not part of the repo
+.noslop-config-wt/
