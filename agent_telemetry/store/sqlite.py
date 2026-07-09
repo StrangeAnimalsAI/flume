@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     raw_sha256 TEXT,
     pipeline_version INTEGER,
     ingested_at_ns INTEGER,
-    metadata TEXT
+    metadata TEXT,
+    experiment TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_source_started
     ON sessions (source, started_at_ns);
@@ -84,6 +85,16 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_tools_session ON tool_calls (session_id, started_at_ns);
 CREATE INDEX IF NOT EXISTS idx_tools_name ON tool_calls (name);
+
+CREATE TABLE IF NOT EXISTS experiments (
+    name TEXT PRIMARY KEY,
+    hypothesis TEXT,
+    source TEXT,
+    project TEXT,
+    started_at_ns INTEGER NOT NULL,
+    ended_at_ns INTEGER,
+    created_at_ns INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS findings (
     kind TEXT NOT NULL,
@@ -168,6 +179,7 @@ class SqliteSessionStore(SessionStore):
             **hierarchy,
             "raw_sha256": "TEXT",
             "pipeline_version": "INTEGER",
+            "experiment": "TEXT",
         }
         missing = {k: v for k, v in wanted.items() if k not in existing}
         with self._conn:
@@ -226,9 +238,15 @@ class SqliteSessionStore(SessionStore):
 
     def ingest_session(self, bundle: SessionBundle) -> None:
         session_id = bundle.session["session_id"]
+        session = dict(bundle.session)
+        session["experiment"] = self._experiment_tags(
+            session.get("source"),
+            session.get("project"),
+            session.get("started_at_ns"),
+        )
         with self._conn:
             self._delete_session_rows(session_id)
-            self._insert("sessions", bundle.session)
+            self._insert("sessions", session)
             for turn in bundle.turns:
                 self._insert("turns", {**turn, "session_id": session_id})
             for tool in bundle.tool_calls:
@@ -587,6 +605,125 @@ class SqliteSessionStore(SessionStore):
             sql += " AND c.text LIKE ?"
             params.append(like)
         return self._all(sql, tuple(params))
+
+    # -- experiments --------------------------------------------------------
+    #
+    # An experiment is a named time window, optionally scoped to a source
+    # and/or project. Sessions whose start falls inside an experiment's
+    # window (and match its scope) carry its name in sessions.experiment —
+    # comma-joined when windows overlap. Tags are recomputed from the
+    # experiments table alone, so retagging is idempotent and re-ingesting
+    # a session never loses its tag.
+
+    def create_experiment(
+        self,
+        name: str,
+        *,
+        hypothesis: str | None = None,
+        source: str | None = None,
+        project: str | None = None,
+        started_at_ns: int | None = None,
+        ended_at_ns: int | None = None,
+    ) -> dict[str, Any]:
+        import time
+
+        now = time.time_ns()
+        row = {
+            "name": name,
+            "hypothesis": hypothesis,
+            "source": source,
+            "project": project,
+            "started_at_ns": started_at_ns or now,
+            "ended_at_ns": ended_at_ns,
+            "created_at_ns": now,
+        }
+        with self._conn:
+            self._insert("experiments", row)
+        self.retag_experiments()
+        return row
+
+    def end_experiment(self, name: str, ended_at_ns: int | None = None) -> dict[str, Any]:
+        import time
+
+        experiment = self.get_experiment(name)
+        if experiment is None:
+            raise KeyError(f"no experiment named {name!r}")
+        with self._conn:
+            self._conn.execute(
+                "UPDATE experiments SET ended_at_ns = ? WHERE name = ?",
+                (ended_at_ns or time.time_ns(), name),
+            )
+        self.retag_experiments()
+        return self.get_experiment(name)  # type: ignore[return-value]
+
+    def get_experiment(self, name: str) -> dict[str, Any] | None:
+        return self._one("SELECT * FROM experiments WHERE name = ?", (name,))
+
+    def list_experiments(self) -> list[dict[str, Any]]:
+        return self._all(
+            """
+            SELECT e.*, (
+                SELECT COUNT(*) FROM sessions s
+                WHERE s.is_subagent = 0
+                    AND ',' || COALESCE(s.experiment, '') || ',' LIKE '%,' || e.name || ',%'
+            ) AS sessions
+            FROM experiments e ORDER BY e.started_at_ns DESC
+            """
+        )
+
+    def experiment_session_ids(self, name: str) -> list[str]:
+        return [
+            row["session_id"]
+            for row in self._all(
+                """
+                SELECT session_id FROM sessions
+                WHERE is_subagent = 0
+                    AND ',' || COALESCE(experiment, '') || ',' LIKE ?
+                ORDER BY started_at_ns
+                """,
+                (f"%,{name},%",),
+            )
+        ]
+
+    def retag_experiments(self) -> int:
+        """Recompute sessions.experiment for every session. Returns rows changed."""
+        changed = 0
+        rows = self._all(
+            "SELECT session_id, source, project, started_at_ns, experiment FROM sessions"
+        )
+        with self._conn:
+            for row in rows:
+                tags = self._experiment_tags(
+                    row["source"], row["project"], row["started_at_ns"]
+                )
+                if tags != row["experiment"]:
+                    self._conn.execute(
+                        "UPDATE sessions SET experiment = ? WHERE session_id = ?",
+                        (tags, row["session_id"]),
+                    )
+                    changed += 1
+        return changed
+
+    def _experiment_tags(
+        self,
+        source: str | None,
+        project: str | None,
+        started_at_ns: int | None,
+    ) -> str | None:
+        if started_at_ns is None:
+            return None
+        matched = [
+            row["name"]
+            for row in self._all(
+                "SELECT name, source, project, started_at_ns, ended_at_ns "
+                "FROM experiments ORDER BY name"
+            )
+            if started_at_ns >= row["started_at_ns"]
+            and (row["ended_at_ns"] is None or started_at_ns <= row["ended_at_ns"])
+            and (row["source"] is None or row["source"] == source)
+            and (row["project"] is None or row["project"] == project)
+        ]
+        return ",".join(matched) if matched else None
 
     def upsert_findings(self, findings: list[dict[str, Any]]) -> None:
         import time

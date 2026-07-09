@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_telemetry.store.audit import script_clusters
+from agent_telemetry.store.navtime import nav_summary, session_nav_shares
 
 Finding = dict[str, Any]
 
@@ -41,6 +42,8 @@ def run_insights(store, *, since_ns: int | None = None) -> list[Finding]:
         _marathon_sessions,
         _premium_grind,
         _docnav_ignored,
+        _nav_share,
+        _thinking_volume,
     ):
         findings.extend(detector(store, since_ns))
     findings.sort(key=lambda f: (f["severity"], -f["metric"]))
@@ -306,6 +309,89 @@ def _docnav_ignored(store, since_ns) -> list[Finding]:
         "Strengthen the CLAUDE.md nav instruction in those repos, or "
         "regenerate stale indexes (repo-nav index).",
         {"session_ids": [s["session_id"] for s in ignored[:10]]},
+    )]
+
+
+def _nav_share(store, since_ns) -> list[Finding]:
+    """Share of active session time spent navigating code (cycle attribution).
+
+    Measured 2026-07-08: ~33% median across May-July sessions — the single
+    largest tool class, on par with pure generation. The fingerprint is
+    fixed so re-runs update one row and the trend stays visible; experiment
+    windows (analyze experiment compare) give the controlled before/after."""
+    rows = session_nav_shares(store, since_ns=since_ns)
+    summary = nav_summary(rows)
+    if summary["sessions"] < 5:
+        return []
+    median = summary["nav_share_median"]
+    if median < 0.15:
+        return []
+    worst = [r for r in rows if r["active_s"] >= 300][:3]
+    worst_txt = "; ".join(
+        f"{r['project'] or '?'} {r['nav_share']:.0%} of {r['active_s'] / 60:.0f}min"
+        for r in worst
+    )
+    return [_finding(
+        "nav_share", "claude-code",
+        2 if median >= 0.30 else 3,
+        f"Navigation eats {median:.0%} of active time (median of "
+        f"{summary['sessions']} sessions; {summary['nav_hours']}h of "
+        f"{summary['active_hours']}h)",
+        f"Worst sessions: {worst_txt}.",
+        median * 100, "% of active time",
+        "Index the busiest repos (repo-nav index) and keep the CLAUDE.md "
+        "nav contract fresh; run experiments (analyze experiment start) to "
+        "verify tooling changes actually move this number.",
+        {"nav_share_mean": summary["nav_share_mean"],
+         "nav_calls": summary["nav_calls"],
+         "worst_sessions": [r["session_id"] for r in worst]},
+    )]
+
+
+def _thinking_volume(store, since_ns) -> list[Finding]:
+    """Premium output that is invisible reasoning, not deliverable.
+
+    Measured 2026-07-09 (30d): ~91% of 63 MTok premium output was thinking
+    (visible prose 1.8%, tool args 7%). Generation cycles run at healthy
+    throughput (~230 tok/s, waiting negligible), so the 38% generation
+    share of wall time is volume-driven: less thinking = less waiting AND
+    less spend. Levers: effort level, delegation to non-premium models."""
+    where, params = _since(since_ns)
+    premium = " OR ".join(f"t.model LIKE '{m}%'" for m in PREMIUM_MODELS)
+    row = store._one(
+        f"""
+        SELECT SUM(t.output_tokens) out_tok, SUM(t.text_chars) text_chars
+        FROM turns t JOIN sessions s USING (session_id)
+        {where} {"AND" if where else "WHERE"} s.source = 'claude-code'
+            AND s.is_subagent = 0 AND ({premium})
+        """, params) or {}
+    out_tok = row.get("out_tok") or 0
+    if out_tok < 1_000_000:
+        return []
+    visible = (row.get("text_chars") or 0) / (out_tok * 4)
+    args_row = store._one(
+        f"""
+        SELECT SUM(LENGTH(c.text)) n FROM contents c
+        JOIN sessions s USING (session_id)
+        {where} {"AND" if where else "WHERE"} s.source = 'claude-code'
+            AND s.is_subagent = 0 AND c.kind = 'tool_arguments'
+        """, params) or {}
+    args_share = (args_row.get("n") or 0) / (out_tok * 4)
+    invisible = max(0.0, 1 - visible - args_share)
+    if invisible < 0.75:
+        return []
+    return [_finding(
+        "thinking_volume", "claude-code",
+        2 if invisible >= 0.85 else 3,
+        f"{invisible:.0%} of {out_tok / 1e6:.0f} MTok premium output is "
+        "invisible thinking",
+        f"Visible prose {visible:.1%}, tool arguments {args_share:.1%}; "
+        "the rest is reasoning tokens billed at premium output rates and "
+        "emitted in real time (generation dominates session wall-clock).",
+        invisible * 100, "% of output tokens",
+        "Trim thinking volume where judgment isn't needed: delegate "
+        "mechanical loops to scout/mech, and experiment with effortLevel "
+        "(analyze experiment start effort-<level>) before/after.",
     )]
 
 

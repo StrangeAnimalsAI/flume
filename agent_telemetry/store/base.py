@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 CONTENT_KINDS = (
     "thinking",
@@ -250,7 +250,7 @@ class SessionStore(ABC):
     def close(self) -> None:
         """Release resources."""
 
-    def __enter__(self) -> "SessionStore":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: Any) -> None:

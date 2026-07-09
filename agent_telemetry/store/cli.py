@@ -13,6 +13,8 @@ Examples:
     agent-telemetry-analyze tokens --group-by model
     agent-telemetry-analyze search "navigat* codebase" --kind thinking
     agent-telemetry-analyze ingest --source claude-code --path ~/.claude/projects
+    agent-telemetry-analyze experiment start docnav-all --hypothesis "..."
+    agent-telemetry-analyze experiment compare docnav-all
 """
 from __future__ import annotations
 
@@ -142,6 +144,48 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--limit", type=int, default=25)
     p.set_defaults(func=_cmd_insights)
+
+    p = sub.add_parser(
+        "hooks",
+        help="Hook interventions: nudges fired, denials, compliance.",
+    )
+    p.add_argument("--since", help="Window like 24h, 7d, 30d.")
+    p.add_argument("--session", help="Only this session id.")
+    p.add_argument("--limit", type=int, default=500)
+    p.set_defaults(func=_cmd_hooks)
+
+    p = sub.add_parser(
+        "experiment",
+        help="Track experiments: tag sessions in a window, compare metrics.",
+    )
+    exp_sub = p.add_subparsers(dest="experiment_command", required=True)
+    ep = exp_sub.add_parser("start", help="Open an experiment window (tags sessions).")
+    ep.add_argument("name")
+    ep.add_argument("--hypothesis", help="What this experiment should prove.")
+    ep.add_argument("--source", help="Scope: only sessions from this source.")
+    ep.add_argument("--project", help="Scope: only this project label.")
+    ep.add_argument(
+        "--started",
+        help="Window start: ISO date (2026-07-02) or lookback (7d). Default: now.",
+    )
+    ep.set_defaults(func=_cmd_experiment_start)
+    ep = exp_sub.add_parser("stop", help="Close an experiment window.")
+    ep.add_argument("name")
+    ep.add_argument("--ended", help="Window end: ISO date or lookback. Default: now.")
+    ep.set_defaults(func=_cmd_experiment_stop)
+    ep = exp_sub.add_parser("list", help="All experiments with session counts.")
+    ep.set_defaults(func=_cmd_experiment_list)
+    ep = exp_sub.add_parser(
+        "compare", help="Experiment sessions vs pre-experiment baseline."
+    )
+    ep.add_argument("name")
+    ep.add_argument(
+        "--baseline-days",
+        type=int,
+        default=30,
+        help="Baseline window before the experiment start (default 30).",
+    )
+    ep.set_defaults(func=_cmd_experiment_compare)
 
     p = sub.add_parser("cost", help="Dollar cost of Claude usage (cache-aware).")
     p.add_argument("--since", help="Window like 24h, 7d, 30d.")
@@ -313,6 +357,78 @@ def _cmd_insights(store, args) -> list[dict[str, Any]]:
     from agent_telemetry.store.insights import run_insights
 
     return run_insights(store, since_ns=_since_ns(args.since))[: args.limit]
+
+
+def _cmd_hooks(store, args) -> dict[str, Any]:
+    from agent_telemetry.store.hooks import hook_events, hooks_summary
+
+    _require_sqlite(store, "hooks")
+    events = hook_events(
+        store,
+        since_ns=_since_ns(args.since),
+        session_id=args.session,
+        limit=args.limit,
+    )
+    return {"summary": hooks_summary(events), "events": events}
+
+
+def _require_sqlite(store, feature: str):
+    if getattr(store, "_all", None) is None:
+        raise SystemExit(f"{feature} requires the sqlite backend")
+    return store
+
+
+def _cmd_experiment_start(store, args) -> dict[str, Any]:
+    _require_sqlite(store, "experiment")
+    row = store.create_experiment(
+        args.name,
+        hypothesis=args.hypothesis,
+        source=args.source,
+        project=args.project,
+        started_at_ns=_parse_when(args.started),
+    )
+    row["tagged_sessions"] = len(store.experiment_session_ids(args.name))
+    return row
+
+
+def _cmd_experiment_stop(store, args) -> dict[str, Any]:
+    _require_sqlite(store, "experiment")
+    row = store.end_experiment(args.name, _parse_when(args.ended))
+    row["tagged_sessions"] = len(store.experiment_session_ids(args.name))
+    return row
+
+
+def _cmd_experiment_list(store, args) -> list[dict[str, Any]]:
+    _require_sqlite(store, "experiment")
+    return store.list_experiments()
+
+
+def _cmd_experiment_compare(store, args) -> dict[str, Any]:
+    from agent_telemetry.store.experiments import compare_experiment
+
+    _require_sqlite(store, "experiment")
+    try:
+        return compare_experiment(store, args.name, baseline_days=args.baseline_days)
+    except KeyError as exc:
+        raise SystemExit(str(exc.args[0]))
+
+
+def _parse_when(value: str | None) -> int | None:
+    """None -> now (caller default); '7d' -> lookback; else ISO date/time."""
+    if not value:
+        return None
+    match = re.fullmatch(r"(\d+)([hdw])", value.strip())
+    if match:
+        return _since_ns(value)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise SystemExit(
+            f"bad time {value!r}; use ISO (2026-07-02[T14:00]) or lookback (7d)"
+        )
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return int(parsed.timestamp() * 1_000_000_000)
 
 
 # $/MTok (input, output). Cache read = 0.1x input; cache write = 1.25x input
@@ -668,6 +784,80 @@ def _render(command: str | None, result: Any) -> None:
                 print(f"      -> {f['action']}")
         if not result:
             print("(no findings — corpus is clean for this window)")
+        return
+    if command == "hooks":
+        print("== per hook ==")
+        _table(
+            [
+                {
+                    "hook": s["hook"],
+                    "events": s["events"],
+                    "sessions": s["sessions"],
+                    "heeded": s["heeded"] or "-",
+                    "bypassed": s["bypassed"] or "-",
+                    "first": _ts(s["first_ns"]),
+                    "last": _ts(s["last_ns"]),
+                }
+                for s in result["summary"]
+            ]
+        )
+        print("== recent events ==")
+        _table(
+            [
+                {
+                    "when": _ts(e["ts_ns"]),
+                    "hook": e["hook"],
+                    "on": f"{e['event']}:{e['matcher']}",
+                    "outcome": e["outcome"] or "-",
+                    "project": e["project"] or "-",
+                    "message": e["message"][:60],
+                }
+                for e in result["events"][:20]
+            ]
+        )
+        if not result["events"]:
+            print("(no hook interventions recorded in this window)")
+        return
+    if command == "experiment":
+        if isinstance(result, list):  # list
+            _table(
+                [
+                    {
+                        "name": r["name"],
+                        "status": "active" if r["ended_at_ns"] is None else "ended",
+                        "started": _ts(r["started_at_ns"]),
+                        "ended": _ts(r["ended_at_ns"]),
+                        "source": r["source"] or "-",
+                        "project": r["project"] or "-",
+                        "sessions": r["sessions"],
+                        "hypothesis": (r["hypothesis"] or "")[:50],
+                    }
+                    for r in result
+                ]
+            )
+            return
+        if "groups" in result:  # compare
+            exp = result["experiment"]
+            span = f"{_ts(exp['started_at_ns'])} -> "
+            span += _ts(exp["ended_at_ns"]) if exp["ended_at_ns"] else "(active)"
+            print(f"  experiment {exp['name']}  [{span}]")
+            if exp.get("hypothesis"):
+                print(f"  hypothesis: {exp['hypothesis']}")
+            print(f"  baseline: {result['baseline_days']}d before start\n")
+            _table(result["groups"])
+            groups = {g["group"]: g for g in result["groups"]}
+            base, test = groups.get("baseline", {}), groups.get("experiment", {})
+            if base.get("nav_share_median") and test.get("nav_share_median"):
+                delta = test["nav_share_median"] - base["nav_share_median"]
+                print(
+                    f"\n  nav share: {base['nav_share_median']:.1%} -> "
+                    f"{test['nav_share_median']:.1%} ({delta:+.1%})"
+                )
+            if min(base.get("measured") or 0, test.get("measured") or 0) < 10:
+                print("  (small n — directional only, not significant)")
+            return
+        for key, value in result.items():  # start / stop
+            print(f"  {key:24} {_fmt(key, value)}")
         return
     if command == "cost":
         _table(
