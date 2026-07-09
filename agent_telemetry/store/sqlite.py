@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_tools_session ON tool_calls (session_id, started_at_ns);
 CREATE INDEX IF NOT EXISTS idx_tools_name ON tool_calls (name);
+-- Analytic indexes: exploratory queries rank by result size / duration and
+-- group by (session, name, args) for dedup. Without these, each such query
+-- full-scans the whole tool_calls table.
+CREATE INDEX IF NOT EXISTS idx_tools_name_chars ON tool_calls (name, result_chars);
+CREATE INDEX IF NOT EXISTS idx_tools_name_dur ON tool_calls (name, duration_ms);
+CREATE INDEX IF NOT EXISTS idx_tools_chars ON tool_calls (result_chars);
+CREATE INDEX IF NOT EXISTS idx_tools_dedup ON tool_calls (session_id, name, args_hash);
 
 CREATE TABLE IF NOT EXISTS experiments (
     name TEXT PRIMARY KEY,
@@ -152,9 +159,18 @@ class SqliteSessionStore(SessionStore):
         self._conn.execute("PRAGMA journal_mode=WAL")
         added = self._migrate_columns()
         self._conn.executescript(_SCHEMA)
+        self._ensure_views()
         self._fts = self._init_fts()
         if added:
             self._backfill_hierarchy()
+
+    def _ensure_views(self) -> None:
+        from agent_telemetry.store.taxonomy import view_sql
+
+        # Recreate so a taxonomy change takes effect on next open.
+        with self._conn:
+            self._conn.execute("DROP VIEW IF EXISTS tool_calls_ext")
+            self._conn.execute(view_sql())
 
     def _migrate_columns(self) -> bool:
         """ALTER older stores up to the current sessions schema.

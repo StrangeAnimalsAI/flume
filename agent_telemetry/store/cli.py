@@ -199,6 +199,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=_cmd_cost)
 
+    p = sub.add_parser(
+        "sql",
+        help="Run a read-only SQL query over the store (exploratory analysis).",
+        description="Read-only SELECT/WITH/PRAGMA/EXPLAIN over the store. Use the "
+        "`tool_calls_ext` view for kind/vendor/result_tokens_est columns, e.g. "
+        "\"SELECT kind, COUNT(*), SUM(result_tokens_est) FROM tool_calls_ext "
+        "GROUP BY kind ORDER BY 3 DESC\".",
+    )
+    p.add_argument("query", help="A SELECT/WITH/PRAGMA/EXPLAIN statement.")
+    p.add_argument("--limit", type=int, default=50, help="Cap rows rendered.")
+    p.set_defaults(func=_cmd_sql)
+
     p = sub.add_parser("audit", help="Audit queries: repeats, bigreads, toolgaps.")
     audit_sub = p.add_subparsers(dest="audit_command", required=True)
     ap = audit_sub.add_parser(
@@ -587,6 +599,33 @@ def _cmd_rebuild(store, args) -> dict[str, Any]:
         )
 
 
+def _cmd_sql(store, args) -> list[dict[str, Any]]:
+    import sqlite3
+
+    from agent_telemetry.store.base import DEFAULT_STORE_URL
+
+    query = args.query.strip().rstrip(";")
+    head = query.split(None, 1)[0].lower() if query else ""
+    if head not in ("select", "with", "pragma", "explain"):
+        raise SystemExit(
+            "sql: only read-only SELECT/WITH/PRAGMA/EXPLAIN queries are allowed"
+        )
+    url = args.store_url or DEFAULT_STORE_URL
+    path = url[len("sqlite://"):] if url.startswith("sqlite://") else url
+    path = str(Path(path).expanduser())
+    # main() already opened the store read-write (creating the view); this
+    # separate read-only connection guarantees the query can't mutate.
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = [dict(r) for r in conn.execute(query).fetchall()]
+    except sqlite3.Error as exc:
+        raise SystemExit(f"sql error: {exc}")
+    finally:
+        conn.close()
+    return rows[: args.limit]
+
+
 def _cmd_sources(store, args) -> list[dict[str, Any]]:
     from agent_telemetry.store.registry import adapters
 
@@ -763,6 +802,9 @@ def _render(command: str | None, result: Any) -> None:
         _table(result["largest_results"])
         return
     if command == "tokens":
+        _table(result)
+        return
+    if command == "sql":
         _table(result)
         return
     if command == "insights":
