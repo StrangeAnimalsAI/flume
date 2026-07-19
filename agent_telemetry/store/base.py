@@ -104,7 +104,9 @@ class SessionStore(ABC):
                 else None
             )
 
-            def _within(row: dict[str, Any]) -> bool:
+            def _within(
+                row: dict[str, Any], start: int = start, end: int | None = end
+            ) -> bool:
                 ts = row.get("started_at_ns") or 0
                 return ts >= start and (end is None or ts < end)
 

@@ -14,8 +14,8 @@
   Install (manual — review first, do NOT auto-load):
 
     cp recipes/claude-code-desktop.plist \
-       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-claude-code-desktop.plist
-    launchctl load -w ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-claude-code-desktop.plist
+       ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
+    launchctl load -w ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
 
     # Verify the env propagated into the user session:
     launchctl getenv CLAUDE_CODE_ENABLE_TELEMETRY    # -> 1
@@ -37,8 +37,8 @@
        resource attribute source=claude-code-desktop.
 
   Uninstall:
-    launchctl unload ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-claude-code-desktop.plist
-    rm ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-claude-code-desktop.plist
+    launchctl unload ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
+    rm ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
     # Clear any vars stuck in the current session:
     for v in CLAUDE_CODE_ENABLE_TELEMETRY CLAUDE_CODE_ENHANCED_TELEMETRY_BETA \
              OTEL_METRICS_EXPORTER OTEL_LOGS_EXPORTER OTEL_TRACES_EXPORTER \
@@ -53,7 +53,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.jameshtimmins.agent-telemetry-claude-code-desktop</string>
+    <string>io.agent-telemetry-claude-code-desktop</string>
 
     <!--
       One shell invocation that chains all the launchctl setenv calls.

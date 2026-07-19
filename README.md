@@ -90,8 +90,21 @@ agent-telemetry-analyze overview
 agent-telemetry-serve            # http://localhost:8321
 ```
 
-Continuous ingest runs as launchd jobs (`com.james.agent-telemetry.{claude,
-codex}`) on a 10-minute loop, plus a daily cost digest.
+For unattended use, run the idempotent `--once` ingest commands from cron,
+launchd, or your scheduler of choice.
+
+## Development
+
+```sh
+uv sync --frozen
+uv run ruff check .
+uv run pytest -q
+uv build
+```
+
+CI runs the same lint and test checks on Python 3.11, 3.12, and 3.13, then
+builds the source distribution and wheel. Tests are offline and use synthetic
+transcripts; they do not read your local agent history or require Langfuse.
 
 ## Data
 

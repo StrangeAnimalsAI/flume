@@ -160,7 +160,7 @@ def derive_project(cwd: Any) -> str | None:
     """Short project label from a session cwd.
 
     Strips $HOME and worktree noise, keeps the last two path segments:
-    /Users/james/Code/tools/agent-telemetry -> tools/agent-telemetry.
+    /home/alex/projects/tools/agent-telemetry -> tools/agent-telemetry.
     """
     if not isinstance(cwd, str) or not cwd:
         return None

@@ -8,6 +8,7 @@ drift path, we mutate the Langfuse dict and check the diff surfaces the drift.
 No network: `fetch_trace` is bypassed — we call `reconstruct_report` directly
 and feed its output into `diff_reports`.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,8 +16,13 @@ from pathlib import Path
 
 import pytest
 
+from agent_telemetry.analysis.claude_transcript import (
+    analyze_session,
+    is_nav_tool,
+    repeat_key,
+    summarize_input,
+)
 from agent_telemetry.analysis.parity_check import (
-    _load_analyze_sessions,
     diff_reports,
     reconstruct_report,
     stale_ingest_diagnostics,
@@ -148,15 +154,14 @@ def test_happy_path_reconstructs_exact_report(tmp_path: Path) -> None:
     spans = jsonl_to_spans(jsonl)
     trace = _spans_to_langfuse_trace(spans)
 
-    mod = _load_analyze_sessions()
-    local = mod.analyze_session(jsonl)
-    lf = reconstruct_report(
-        trace, "sess", mod.repeat_key, mod.is_nav_tool, mod.summarize_input
-    )
+    local = analyze_session(jsonl)
+    lf = reconstruct_report(trace, "sess", repeat_key, is_nav_tool, summarize_input)
 
     rows = diff_reports(local, lf)
     drifts = [r for r in rows if not r.ok]
-    assert drifts == [], f"unexpected drift: {[(r.metric, r.local, r.langfuse) for r in drifts]}"
+    assert drifts == [], (
+        f"unexpected drift: {[(r.metric, r.local, r.langfuse) for r in drifts]}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -193,11 +198,8 @@ def test_drift_is_detected(tmp_path: Path, mutation: str, expect_metric: str) ->
                 o["metadata"]["attributes"]["claude_code.duration_ms"] = "0"
                 o["startTime"] = o["endTime"]
 
-    mod = _load_analyze_sessions()
-    local = mod.analyze_session(jsonl)
-    lf = reconstruct_report(
-        trace, "sess", mod.repeat_key, mod.is_nav_tool, mod.summarize_input
-    )
+    local = analyze_session(jsonl)
+    lf = reconstruct_report(trace, "sess", repeat_key, is_nav_tool, summarize_input)
     rows = diff_reports(local, lf)
 
     drifted_metrics = {r.metric for r in rows if not r.ok}
@@ -215,10 +217,7 @@ def test_langfuse_attrs_coerced_from_strings(tmp_path: Path) -> None:
     spans = jsonl_to_spans(jsonl)
     trace = _spans_to_langfuse_trace(spans)  # already stringifies everything
 
-    mod = _load_analyze_sessions()
-    lf = reconstruct_report(
-        trace, "sess", mod.repeat_key, mod.is_nav_tool, mod.summarize_input
-    )
+    lf = reconstruct_report(trace, "sess", repeat_key, is_nav_tool, summarize_input)
     # Non-trivial values prove the strings were parsed.
     assert lf["tokens"]["input"] == 12  # 10 + 2
     assert lf["tokens"]["output"] == 27  # 20 + 7
@@ -251,8 +250,7 @@ def test_stale_ingest_diagnostic_flags_missing_langfuse_end_time() -> None:
     )
 
     assert any(
-        "last_ts is present locally but missing from Langfuse" in d
-        for d in diagnostics
+        "last_ts is present locally but missing from Langfuse" in d for d in diagnostics
     )
 
 

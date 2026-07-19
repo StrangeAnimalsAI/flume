@@ -8,35 +8,34 @@
 
   Installation (manual step — do NOT auto-load):
 
-    cp infra/collector/launchd/com.jameshtimmins.agent-telemetry-collector.plist \
+    cp infra/collector/launchd/io.agent-telemetry-collector.plist \
        ~/Library/LaunchAgents/
     launchctl load -w \
-       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
+       ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
 
   Stop / unload:
 
     launchctl unload \
-       ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
+       ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
 
-  WorkingDirectory is hard-coded to the repo's worktree path. If you move the
-  checkout, rewrite that path and reload. Keeping it explicit beats a
-  ${HOME}/Code/... placeholder we'd have to remember to keep in sync.
+  Replace /path/to/agent-telemetry below with this checkout's absolute path
+  before loading the agent. launchd does not expand shell variables here.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.jameshtimmins.agent-telemetry-collector</string>
+    <string>io.agent-telemetry-collector</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>/usr/local/bin/docker compose -f infra/collector/docker-compose.yml up -d</string>
+        <string>docker compose -f infra/collector/docker-compose.yml up -d</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/james/Code/tools/agent-telemetry</string>
+    <string>/path/to/agent-telemetry</string>
 
     <key>EnvironmentVariables</key>
     <dict>

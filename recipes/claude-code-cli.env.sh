@@ -5,11 +5,11 @@
 # project-scoped basic auth, so this script intentionally carries NO secrets.
 #
 # Usage (one-shot, current shell only):
-#   source /Users/james/Code/tools/agent-telemetry/recipes/claude-code-cli.env.sh
+#   source /path/to/agent-telemetry/recipes/claude-code-cli.env.sh
 #   claude -p "say hi"
 #
 # Usage (persistent, every new shell):
-#   echo 'source /Users/james/Code/tools/agent-telemetry/recipes/claude-code-cli.env.sh' >> ~/.zshrc
+#   echo "source ${PWD}/recipes/claude-code-cli.env.sh" >> ~/.zshrc
 #
 # Prerequisites:
 #   - Collector running:  cd infra/collector && docker compose up -d

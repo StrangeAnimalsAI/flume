@@ -422,7 +422,7 @@ def _cmd_experiment_compare(store, args) -> dict[str, Any]:
     try:
         return compare_experiment(store, args.name, baseline_days=args.baseline_days)
     except KeyError as exc:
-        raise SystemExit(str(exc.args[0]))
+        raise SystemExit(str(exc.args[0])) from None
 
 
 def _parse_when(value: str | None) -> int | None:
@@ -437,7 +437,7 @@ def _parse_when(value: str | None) -> int | None:
     except ValueError:
         raise SystemExit(
             f"bad time {value!r}; use ISO (2026-07-02[T14:00]) or lookback (7d)"
-        )
+        ) from None
     if parsed.tzinfo is None:
         parsed = parsed.astimezone()
     return int(parsed.timestamp() * 1_000_000_000)
@@ -620,7 +620,7 @@ def _cmd_sql(store, args) -> list[dict[str, Any]]:
     try:
         rows = [dict(r) for r in conn.execute(query).fetchall()]
     except sqlite3.Error as exc:
-        raise SystemExit(f"sql error: {exc}")
+        raise SystemExit(f"sql error: {exc}") from None
     finally:
         conn.close()
     return rows[: args.limit]

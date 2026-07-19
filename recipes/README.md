@@ -37,7 +37,7 @@ echo "say hi" | claude -p
 Persistent (every shell):
 
 ```bash
-echo 'source /Users/james/Code/tools/agent-telemetry/recipes/claude-code-cli.env.sh' >> ~/.zshrc
+echo "source ${PWD}/recipes/claude-code-cli.env.sh" >> ~/.zshrc
 ```
 
 To turn it off without editing `~/.zshrc`, `unset CLAUDE_CODE_ENABLE_TELEMETRY`
@@ -83,8 +83,8 @@ running app already has the old, empty env baked in).
 
 ```bash
 cp recipes/claude-code-desktop.plist \
-   ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-claude-code-desktop.plist
-launchctl load -w ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-claude-code-desktop.plist
+   ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
+launchctl load -w ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
 
 launchctl getenv OTEL_RESOURCE_ATTRIBUTES   # source=claude-code-desktop
 osascript -e 'quit app "Claude"'

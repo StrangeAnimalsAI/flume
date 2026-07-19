@@ -117,7 +117,7 @@ def session_nav_shares(
         nav_calls = 0
         session_calls = calls.get(session_id, [])
         cursor = 0
-        for begin, end in zip(stamps, stamps[1:]):
+        for begin, end in zip(stamps, stamps[1:], strict=False):
             seconds = (end - begin) / 1e9
             if seconds <= 0:
                 continue

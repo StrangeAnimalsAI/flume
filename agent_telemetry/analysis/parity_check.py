@@ -1,7 +1,7 @@
-"""Parity check: reconstruct the analyze_sessions.py report from Langfuse.
+"""Parity check: reconstruct source-level transcript metrics from Langfuse.
 
 This is the MVP confidence gate. We parse the JSONL locally via
-`analyze_sessions.analyze_session`, fetch the same session's trace +
+`claude_transcript.analyze_session`, fetch the same session's trace +
 observations from Langfuse, reconstruct the report shape purely from what
 Langfuse preserved, and diff.
 
@@ -15,10 +15,10 @@ Credentials default to `infra/langfuse/.env` in this repo.
 
 Exit code: 0 if every metric matches within tolerance, 1 otherwise.
 """
+
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -31,33 +31,18 @@ from typing import Any
 
 import httpx
 
+from agent_telemetry.analysis.claude_transcript import (
+    analyze_session,
+    is_nav_tool,
+    repeat_key,
+    summarize_input,
+)
 from agent_telemetry.backfill.claude_code import _trace_id
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LANGFUSE_ENV = REPO_ROOT / "infra" / "langfuse" / ".env"
-ANALYZE_SESSIONS_PATH = Path(
-    "/Users/james/Code/biz/security/crypto-analysis/scripts/analyze_sessions.py"
-)
-
 # ±1 ms tolerance on wall/active time (ns↔s rounding).
 TIMING_EPSILON_S = 0.001
-
-
-def _load_analyze_sessions() -> Any:
-    """Import the external analyze_sessions.py by file path.
-
-    We avoid sys.path hacks and avoid modifying the upstream file. The only
-    load-bearing symbols we need are `analyze_session` and `repeat_key`.
-    """
-    spec = importlib.util.spec_from_file_location(
-        "analyze_sessions", ANALYZE_SESSIONS_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot import {ANALYZE_SESSIONS_PATH}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["analyze_sessions"] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def _load_langfuse_env(path: Path = LANGFUSE_ENV) -> dict[str, str]:
@@ -170,7 +155,10 @@ def reconstruct_report(
     # upsert by span_id. Root start/end are what the mapper controls.
     root_obs: dict[str, Any] | None = None
     for obs in observations:
-        if obs.get("parentObservationId") is None and obs.get("name") == "claude_code.interaction":
+        if (
+            obs.get("parentObservationId") is None
+            and obs.get("name") == "claude_code.interaction"
+        ):
             root_obs = obs
             break
     if root_obs:
@@ -278,7 +266,9 @@ def reconstruct_report(
     # The local parser produces a {entrypoint: count} dict. Langfuse only
     # carries a single entrypoint string on the root. We report the single
     # value, count unknown — the diff layer will normalize.
-    entrypoints = {entrypoint_str: turns_user_reconstructed or 0} if entrypoint_str else {}
+    entrypoints = (
+        {entrypoint_str: turns_user_reconstructed or 0} if entrypoint_str else {}
+    )
 
     return {
         "session_id": session_id,
@@ -375,10 +365,18 @@ def diff_reports(local: dict[str, Any], lf: dict[str, Any]) -> list[DiffRow]:
     # Timing.
     add("wall_time_s", local["wall_time_s"], lf["wall_time_s"], _eq_timing)
     add("active_time_s", local["active_time_s"], lf["active_time_s"], _eq_timing)
-    add("first_ts", local.get("first_ts"), lf.get("first_ts"),
-        lambda a, b: _parse_iso(a) == _parse_iso(b))
-    add("last_ts", local.get("last_ts"), lf.get("last_ts"),
-        lambda a, b: _parse_iso(a) == _parse_iso(b))
+    add(
+        "first_ts",
+        local.get("first_ts"),
+        lf.get("first_ts"),
+        lambda a, b: _parse_iso(a) == _parse_iso(b),
+    )
+    add(
+        "last_ts",
+        local.get("last_ts"),
+        lf.get("last_ts"),
+        lambda a, b: _parse_iso(a) == _parse_iso(b),
+    )
 
     # Tokens.
     for k in ("input", "output", "cache_read", "cache_create"):
@@ -406,10 +404,16 @@ def diff_reports(local: dict[str, Any], lf: dict[str, Any]) -> list[DiffRow]:
     tool_names = sorted(set(local["by_tool"]) | set(lf["by_tool"]))
     for name in tool_names:
         l_stats = local["by_tool"].get(name) or {
-            "count": 0, "total_s": 0.0, "errors": 0, "total_result_chars": 0
+            "count": 0,
+            "total_s": 0.0,
+            "errors": 0,
+            "total_result_chars": 0,
         }
         f_stats = lf["by_tool"].get(name) or {
-            "count": 0, "total_s": 0.0, "errors": 0, "total_result_chars": 0
+            "count": 0,
+            "total_s": 0.0,
+            "errors": 0,
+            "total_result_chars": 0,
         }
         add(f"by_tool[{name}].count", l_stats["count"], f_stats["count"])
         # total_s is a float sum; allow mild fuzz (sums of ms→s can round).
@@ -540,17 +544,16 @@ def run_parity(
     trace_id: str | None,
     creds: LangfuseCreds,
 ) -> tuple[list[DiffRow], dict[str, Any], dict[str, Any]]:
-    mod = _load_analyze_sessions()
-    local_report = mod.analyze_session(jsonl_path)
+    local_report = analyze_session(jsonl_path)
     session_id = jsonl_path.stem
     tid = trace_id or _trace_id(session_id)
     trace = fetch_trace(creds, tid)
     lf_report = reconstruct_report(
         trace,
         session_id,
-        mod.repeat_key,
-        mod.is_nav_tool,
-        mod.summarize_input,
+        repeat_key,
+        is_nav_tool,
+        summarize_input,
     )
     rows = diff_reports(local_report, lf_report)
     return rows, local_report, lf_report

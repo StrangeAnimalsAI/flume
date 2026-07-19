@@ -130,12 +130,13 @@ collector itself without taking it out of the loop).
 
 ## LaunchAgent — start at login
 
-A LaunchAgent plist ships under `launchd/`. It is NOT auto-loaded. Install
-manually when you want the collector up at every login:
+A LaunchAgent plist ships under `launchd/`. It is NOT auto-loaded. First edit
+its `WorkingDirectory` to this checkout's absolute path, then install it when
+you want the collector up at every login:
 
 ```bash
-cp launchd/com.jameshtimmins.agent-telemetry-collector.plist ~/Library/LaunchAgents/
-launchctl load -w ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
+cp launchd/io.agent-telemetry-collector.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
 
 # Verify:
 launchctl list | grep agent-telemetry-collector
@@ -145,8 +146,8 @@ tail -f /tmp/agent-telemetry-collector.stdout.log
 Stop / unload:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
-rm ~/Library/LaunchAgents/com.jameshtimmins.agent-telemetry-collector.plist
+launchctl unload ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
+rm ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
 ```
 
 The plist runs `docker compose ... up -d` with a hard-coded
