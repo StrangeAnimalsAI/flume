@@ -5,11 +5,11 @@ import os
 import time
 from pathlib import Path
 
-from agent_telemetry.ingest.cli import main
-from agent_telemetry.ingest.fake import FakeTranscriptSource, fake_ingest
-from agent_telemetry.ingest.fingerprint import fingerprint_file, is_quiet
-from agent_telemetry.ingest.runner import IngestOutcome, IngestRequest, run_once
-from agent_telemetry.ingest.state import IngestStatus, SqliteIngestStateStore
+from flume.ingest.cli import main
+from flume.ingest.fake import FakeTranscriptSource, fake_ingest
+from flume.ingest.fingerprint import fingerprint_file, is_quiet
+from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
+from flume.ingest.state import IngestStatus, SqliteIngestStateStore
 
 
 NOW = 1_800_000_000.0

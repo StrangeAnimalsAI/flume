@@ -65,7 +65,7 @@ trace ID. Use this check to summarize recent Langfuse data and flag split
 sessions or orphan child spans:
 
 ```bash
-uv run python -m agent_telemetry.analysis.claude_live_trace_check
+uv run python -m flume.analysis.claude_live_trace_check
 ```
 
 The collector should not synthesize missing `claude_code.interaction` roots:
@@ -83,8 +83,8 @@ running app already has the old, empty env baked in).
 
 ```bash
 cp recipes/claude-code-desktop.plist \
-   ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
-launchctl load -w ~/Library/LaunchAgents/io.agent-telemetry-claude-code-desktop.plist
+   ~/Library/LaunchAgents/io.flume-claude-code-desktop.plist
+launchctl load -w ~/Library/LaunchAgents/io.flume-claude-code-desktop.plist
 
 launchctl getenv OTEL_RESOURCE_ATTRIBUTES   # source=claude-code-desktop
 osascript -e 'quit app "Claude"'
@@ -203,7 +203,7 @@ BuildKit's `moby.buildkit.*`, `moby.filesync.*`, and `moby.auth.*`
 namespaces, or resources whose `service.name` identifies Docker/buildx, from
 showing up as Codex or Claude Code sessions when they inherit agent OTEL env
 vars. After changing the filter, run
-`uv run python -m agent_telemetry.analysis.collector_noise_check` to summarize
+`uv run python -m flume.analysis.collector_noise_check` to summarize
 recent Langfuse traces by source/service and confirm the noise is absent.
 
 The collector classifies Codex-owned live services before copying raw
@@ -253,7 +253,7 @@ const res = (x) => md(x).resourceAttributes || {};
 Expected result for fresh traces: `source` may still show the inherited raw
 resource value, but `agent_source` and `agent_family` should both be `codex`.
 In the Langfuse UI, open `http://localhost:3000`, choose project
-`agent-telemetry-proj`, and filter recent traces by `metadata.agent_source =
+`flume-proj`, and filter recent traces by `metadata.agent_source =
 codex` or tag `agent:codex`.
 
 ### Live Codex app-server vs rollout backfill
@@ -280,7 +280,7 @@ records by themselves.
 As of the INT-695 check, recent live traces did not include Langfuse
 `input`/`output` payloads or prompt/transcript text attributes, even when they
 included model, turn, tool, duration, and token metadata. Use
-`agent_telemetry.analysis.codex_live_trace_check` to audit the current live
+`flume.analysis.codex_live_trace_check` to audit the current live
 shape. Use Codex rollout backfill for the canonical
 `codex.interaction` / `codex.llm_request` / `codex.tool` session view until
 live telemetry carries prompt/transcript payloads and a session-root span.

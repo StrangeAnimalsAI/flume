@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from agent_telemetry.store.archive import open_archive
-from agent_telemetry.store.base import open_store
-from agent_telemetry.store.config import (
+from flume.store.archive import open_archive
+from flume.store.base import open_store
+from flume.store.config import (
     RetentionPolicy,
     load_policy,
     parse_duration_ns,
 )
-from agent_telemetry.store.ingest import ingest_path
-from agent_telemetry.store.registry import get_adapter
-from agent_telemetry.store.retention import run_retention
+from flume.store.ingest import ingest_path
+from flume.store.registry import get_adapter
+from flume.store.retention import run_retention
 
 DAY_NS = 86_400_000_000_000
 
@@ -96,8 +96,8 @@ def test_ingest_path_archives_raw(tmp_path: Path) -> None:
 
 
 def test_mapper_failure_still_archives_raw(tmp_path: Path, monkeypatch) -> None:
-    from agent_telemetry.store import registry
-    from agent_telemetry.store.registry import SourceAdapter
+    from flume.store import registry
+    from flume.store.registry import SourceAdapter
 
     def boom(path: Path):
         raise OverflowError("string longer than INT_MAX bytes")

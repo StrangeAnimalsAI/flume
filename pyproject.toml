@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-telemetry"
+name = "flume"
 version = "0.1.0"
 description = "Local-first telemetry and analysis for Claude Code and Codex sessions."
 readme = "README.md"
@@ -18,13 +18,10 @@ dependencies = [
 ]
 
 [project.scripts]
-agent-telemetry-auto-ingest = "agent_telemetry.ingest.cli:main"
-agent-telemetry-analyze = "agent_telemetry.store.cli:main"
-agent-telemetry-serve = "agent_telemetry.store.server:main"
-agent-telemetry-harness = "agent_telemetry.harness.agent:main"
+flume = "flume.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent_telemetry"]
+packages = ["flume"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

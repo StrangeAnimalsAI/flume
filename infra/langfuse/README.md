@@ -1,6 +1,6 @@
 # Self-hosted Langfuse (local)
 
-A v0 Langfuse v3 stack for local development. The `agent-telemetry` backfill
+A v0 Langfuse v3 stack for local development. The `flume` backfill
 CLI and (eventually) the live OTel Collector push spans here at
 `http://localhost:3000/api/public/otel/v1/traces`.
 
@@ -58,8 +58,8 @@ UI: <http://localhost:3000>. Sign in with `LANGFUSE_INIT_USER_EMAIL` /
 ## First-boot seeding vs. UI click-through
 
 The stack uses the `LANGFUSE_INIT_*` env vars, so no UI click-through is
-needed on first boot — one org (`agent-telemetry-org`), one project
-(`agent-telemetry-proj`), one user, and one API-key pair are seeded directly.
+needed on first boot — one org (`flume-org`), one project
+(`flume-proj`), one user, and one API-key pair are seeded directly.
 These vars are **ignored on subsequent boots** once the records exist in
 postgres; rotating them after the fact has no effect.
 
@@ -84,7 +84,7 @@ env var:
 
 ```bash
 export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Basic $AUTH"
-uv run python -m agent_telemetry.backfill.claude_code \
+uv run python -m flume.backfill.claude_code \
   --path ~/.claude/projects/<project>/<session>.jsonl \
   --endpoint http://localhost:3000/api/public/otel/v1/traces
 ```
@@ -107,13 +107,13 @@ curl -sS -i -X POST \
 ```
 
 Expect `HTTP/1.1 200 OK` with a JSON body announcing an `otel-ingestion-job`
-queued against `projectId: agent-telemetry-proj`. The trace appears in the UI
+queued against `projectId: flume-proj`. The trace appears in the UI
 a few seconds later.
 
 ### (b) Real backfill via the INT-432 CLI
 
 ```bash
-uv run python -m agent_telemetry.backfill.claude_code \
+uv run python -m flume.backfill.claude_code \
   --path ~/.claude/projects/<project>/<session>.jsonl \
   --endpoint http://localhost:3000/api/public/otel/v1/traces
 ```
@@ -138,15 +138,15 @@ trace, then rerun the deterministic backfill for the original source file:
 
 ```bash
 # Dry-run: prints the trace name, timestamp, and observation count.
-uv run python -m agent_telemetry.analysis.langfuse_trace_reconcile \
+uv run python -m flume.analysis.langfuse_trace_reconcile \
   e08b95ad6fd560012ff085a57be21609
 
 # Delete exactly that trace from local Langfuse.
-uv run python -m agent_telemetry.analysis.langfuse_trace_reconcile \
+uv run python -m flume.analysis.langfuse_trace_reconcile \
   e08b95ad6fd560012ff085a57be21609 --yes
 
 # Recreate it from the fixed mapper.
-uv run python -m agent_telemetry.backfill.claude_code \
+uv run python -m flume.backfill.claude_code \
   --path ~/.claude/projects/<project>/<session>.jsonl \
   --endpoint http://localhost:3000/api/public/otel/v1/traces
 ```

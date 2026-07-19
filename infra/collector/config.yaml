@@ -1,4 +1,4 @@
-# OpenTelemetry Collector config — local fan-in for agent-telemetry (INT-435).
+# OpenTelemetry Collector config — local fan-in for flume (INT-435).
 #
 # Shape: OTLP traces receiver (gRPC + HTTP on 4317/4318) → memory_limiter →
 # filter/drop_non_agent_infra → resource/enrich →
@@ -85,7 +85,7 @@ processors:
         value: local
         action: upsert
       - key: telemetry.collector.name
-        value: agent-telemetry-collector
+        value: flume-collector
         action: upsert
 
   # PII-scrub hook. Intentionally a no-op today — the placeholder statement

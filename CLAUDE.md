@@ -1,4 +1,4 @@
-# agent-telemetry — agent conventions
+# flume — agent conventions
 
 ## Code navigation
 

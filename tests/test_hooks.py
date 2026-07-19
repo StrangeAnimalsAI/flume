@@ -7,9 +7,9 @@ against a live reread-guard denial, 2026-07-08):
 """
 from __future__ import annotations
 
-from agent_telemetry.store.base import ContentRow, SessionBundle
-from agent_telemetry.store.hooks import hook_events, hooks_summary
-from agent_telemetry.store.sqlite import SqliteSessionStore
+from flume.store.base import ContentRow, SessionBundle
+from flume.store.hooks import hook_events, hooks_summary
+from flume.store.sqlite import SqliteSessionStore
 
 BASE_NS = 1_780_000_000 * 1_000_000_000
 SECOND_NS = 1_000_000_000

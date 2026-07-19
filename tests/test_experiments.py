@@ -9,10 +9,10 @@ The load-bearing guarantees:
 """
 from __future__ import annotations
 
-from agent_telemetry.store.base import ContentRow, SessionBundle
-from agent_telemetry.store.experiments import compare_experiment
-from agent_telemetry.store.navtime import classify_tool, session_nav_shares
-from agent_telemetry.store.sqlite import SqliteSessionStore
+from flume.store.base import ContentRow, SessionBundle
+from flume.store.experiments import compare_experiment
+from flume.store.navtime import classify_tool, session_nav_shares
+from flume.store.sqlite import SqliteSessionStore
 
 HOUR_NS = 3600 * 1_000_000_000
 BASE_NS = 1_780_000_000 * 1_000_000_000  # 2026-06-08
@@ -245,7 +245,7 @@ def test_compare_experiment_baseline_vs_tagged(tmp_path):
 
 
 def test_read_used_share_derived_from_edits_and_mentions(tmp_path):
-    from agent_telemetry.store.experiments import _read_used_share
+    from flume.store.experiments import _read_used_share
 
     second = 1_000_000_000
     bundle = _bundle(

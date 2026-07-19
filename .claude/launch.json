@@ -4,7 +4,7 @@
     {
       "name": "analysis-ui",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "agent-telemetry-serve", "--port", "8321"],
+      "runtimeArgs": ["run", "flume", "serve", "--port", "8321"],
       "port": 8321
     }
   ]

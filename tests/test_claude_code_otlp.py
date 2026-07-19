@@ -17,8 +17,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
-from agent_telemetry.backfill.claude_code import jsonl_to_spans
-from agent_telemetry.backfill.otlp import export_span_dicts
+from flume.backfill.claude_code import jsonl_to_spans
+from flume.backfill.otlp import export_span_dicts
 
 
 def _write_jsonl(path: Path, events: list[dict]) -> None:

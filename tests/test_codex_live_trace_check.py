@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from agent_telemetry.analysis.codex_live_trace_check import (
+from flume.analysis.codex_live_trace_check import (
     CodexTrace,
     _analysis_counts,
     _is_codex_trace,

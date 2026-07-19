@@ -1,9 +1,9 @@
 # Agent spend analysis — 2026-07-02
 
-Source: the local session store (`~/.agent-telemetry/store.sqlite3`), 2,693
+Source: the local session store (`~/.flume/store.sqlite3`), 2,693
 sessions (1,655 Claude Code, 1,038 Codex), 255,084 tool calls, 313k turns,
 spanning 2026-03-30 → 2026-07-02. Reproduce any number with
-`agent-telemetry-analyze` or SQL against the store.
+`flume analyze` or SQL against the store.
 
 ## Headline: per-turn context load
 

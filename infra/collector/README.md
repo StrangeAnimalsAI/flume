@@ -1,6 +1,6 @@
 # Local OTel Collector
 
-Single fan-in point for every agent-telemetry sender on this machine — the
+Single fan-in point for every flume sender on this machine — the
 backfill CLIs today, live Claude Code / Codex recipes (INT-437, INT-438)
 tomorrow. Everything speaks OTLP to `http://localhost:4318`; the collector
 batches, enriches, and forwards to the local Langfuse stack with auth.
@@ -69,7 +69,7 @@ After restarting the collector and running a Docker/buildx-heavy agent task,
 check recent Langfuse traces for leftover infrastructure noise:
 
 ```bash
-uv run python -m agent_telemetry.analysis.collector_noise_check
+uv run python -m flume.analysis.collector_noise_check
 ```
 
 The check reads Langfuse credentials from `infra/langfuse/.env` by default
@@ -84,7 +84,7 @@ Langfuse trace IDs when child spans arrive without a
 `claude_code.interaction` parent. Summarize recent Claude observations with:
 
 ```bash
-uv run python -m agent_telemetry.analysis.claude_live_trace_check
+uv run python -m flume.analysis.claude_live_trace_check
 ```
 
 This is a detection check, not a collector repair path. The collector keeps
@@ -110,7 +110,7 @@ curl -sS -i -X POST \
 ```
 
 Expect `HTTP/1.1 200 OK` from the collector. A few seconds later the trace
-shows up in the Langfuse UI under project `agent-telemetry-proj`. Note:
+shows up in the Langfuse UI under project `flume-proj`. Note:
 the trace id is what you sent to the collector, not what the collector
 generated — deterministic IDs round-trip cleanly.
 
@@ -120,7 +120,7 @@ The backfill CLIs default to `http://localhost:4318/v1/traces` — that's the
 collector. No flag needed:
 
 ```bash
-uv run python -m agent_telemetry.backfill.claude_code \
+uv run python -m flume.backfill.claude_code \
   --path ~/.claude/projects/<project>/<session>.jsonl
 ```
 
@@ -135,19 +135,19 @@ its `WorkingDirectory` to this checkout's absolute path, then install it when
 you want the collector up at every login:
 
 ```bash
-cp launchd/io.agent-telemetry-collector.plist ~/Library/LaunchAgents/
-launchctl load -w ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
+cp launchd/io.flume-collector.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/io.flume-collector.plist
 
 # Verify:
-launchctl list | grep agent-telemetry-collector
-tail -f /tmp/agent-telemetry-collector.stdout.log
+launchctl list | grep flume-collector
+tail -f /tmp/flume-collector.stdout.log
 ```
 
 Stop / unload:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
-rm ~/Library/LaunchAgents/io.agent-telemetry-collector.plist
+launchctl unload ~/Library/LaunchAgents/io.flume-collector.plist
+rm ~/Library/LaunchAgents/io.flume-collector.plist
 ```
 
 The plist runs `docker compose ... up -d` with a hard-coded

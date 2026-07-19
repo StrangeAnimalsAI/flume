@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from agent_telemetry.analysis.langfuse_trace_reconcile import (
+from flume.analysis.langfuse_trace_reconcile import (
     _is_local_url,
     _summarize_trace,
     delete_clickhouse_trace,

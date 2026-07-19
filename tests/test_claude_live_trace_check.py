@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_telemetry.analysis.claude_live_trace_check import (
+from flume.analysis.claude_live_trace_check import (
     ClaudeObservation,
     format_summary,
     summarize,

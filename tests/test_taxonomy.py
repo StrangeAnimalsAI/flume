@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_telemetry.store.base import open_store
-from agent_telemetry.store.cli import main
-from agent_telemetry.store.taxonomy import tool_kind, tool_vendor
+from flume.store.base import open_store
+from flume.store.cli import main
+from flume.store.taxonomy import tool_kind, tool_vendor
 
 
 def test_tool_kind_classification() -> None:

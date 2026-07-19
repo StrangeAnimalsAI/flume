@@ -5,17 +5,17 @@ import os
 import time
 from pathlib import Path
 
-from agent_telemetry.backfill.codex import trace_id_for_session
-from agent_telemetry.ingest.cli import main
-from agent_telemetry.ingest.codex import (
+from flume.backfill.codex import trace_id_for_session
+from flume.ingest.cli import main
+from flume.ingest.codex import (
     CodexRolloutSource,
     ingest_codex_rollout,
     read_rollout_metadata,
 )
-from agent_telemetry.ingest.fingerprint import fingerprint_file
-from agent_telemetry.ingest.runner import IngestOutcome, IngestRequest, run_once
-from agent_telemetry.ingest.state import IngestStatus, SqliteIngestStateStore
-from agent_telemetry.ingest.types import DiscoveredTranscript
+from flume.ingest.fingerprint import fingerprint_file
+from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
+from flume.ingest.state import IngestStatus, SqliteIngestStateStore
+from flume.ingest.types import DiscoveredTranscript
 
 
 NOW = 1_800_000_000.0

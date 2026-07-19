@@ -10,10 +10,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent_telemetry.harness.agent import run_session
-from agent_telemetry.store.base import open_store
-from agent_telemetry.store.ingest import ingest_path
-from agent_telemetry.store.registry import get_adapter
+from flume.harness.agent import run_session
+from flume.store.base import open_store
+from flume.store.ingest import ingest_path
+from flume.store.registry import get_adapter
 
 THINKING_1 = "The store schema suggests checking retention.py first."
 THINKING_2 = "The config default explains the skipped blobs."
@@ -217,7 +217,7 @@ def _sdk_stream_factory():
 def _run_sdk(tmp_path: Path) -> Path:
     import anyio
 
-    from agent_telemetry.harness.sdk_backend import run_sdk_session
+    from flume.harness.sdk_backend import run_sdk_session
 
     async def go() -> Path:
         return await run_sdk_session(

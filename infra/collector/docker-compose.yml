@@ -1,4 +1,4 @@
-# OpenTelemetry Collector — local fan-in for agent-telemetry (INT-435).
+# OpenTelemetry Collector — local fan-in for flume (INT-435).
 #
 # Symmetric with infra/langfuse/docker-compose.yml. Runs under its own compose
 # project so starting/stopping the collector doesn't tug at the Langfuse stack.

@@ -16,13 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_telemetry.analysis.claude_transcript import (
+from flume.analysis.claude_transcript import (
     analyze_session,
     is_nav_tool,
     repeat_key,
     summarize_input,
 )
-from agent_telemetry.analysis.parity_check import (
+from flume.analysis.parity_check import (
     diff_reports,
     reconstruct_report,
     stale_ingest_diagnostics,
@@ -148,7 +148,7 @@ def _spans_to_langfuse_trace(spans: list[dict]) -> dict:
 
 
 def test_happy_path_reconstructs_exact_report(tmp_path: Path) -> None:
-    from agent_telemetry.backfill.claude_code import jsonl_to_spans
+    from flume.backfill.claude_code import jsonl_to_spans
 
     jsonl = _jsonl(tmp_path / "sess.jsonl")
     spans = jsonl_to_spans(jsonl)
@@ -174,7 +174,7 @@ def test_happy_path_reconstructs_exact_report(tmp_path: Path) -> None:
 )
 def test_drift_is_detected(tmp_path: Path, mutation: str, expect_metric: str) -> None:
     """Mutate the Langfuse trace and verify `diff_reports` flags the metric."""
-    from agent_telemetry.backfill.claude_code import jsonl_to_spans
+    from flume.backfill.claude_code import jsonl_to_spans
 
     jsonl = _jsonl(tmp_path / "sess.jsonl")
     spans = jsonl_to_spans(jsonl)
@@ -211,7 +211,7 @@ def test_drift_is_detected(tmp_path: Path, mutation: str, expect_metric: str) ->
 def test_langfuse_attrs_coerced_from_strings(tmp_path: Path) -> None:
     """Regression guard: OTLP/Langfuse returns numeric attrs as strings; the
     reconstruction must coerce, not silently read them as '0'."""
-    from agent_telemetry.backfill.claude_code import jsonl_to_spans
+    from flume.backfill.claude_code import jsonl_to_spans
 
     jsonl = _jsonl(tmp_path / "sess.jsonl")
     spans = jsonl_to_spans(jsonl)

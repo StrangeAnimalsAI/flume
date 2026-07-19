@@ -1,4 +1,4 @@
-# agent-telemetry
+# flume
 
 Unified telemetry for coding agents — Claude Code (CLI + desktop), Codex (CLI + desktop + IDE), and a future custom harness — with two sinks: a **local session store** (full fidelity, own UI, audit-oriented) and Langfuse via OTel (legacy path).
 
@@ -9,13 +9,13 @@ Unified telemetry for coding agents — Claude Code (CLI + desktop), Codex (CLI 
 
 ## Session Store (own backend — full fidelity)
 
-The store keeps what the Langfuse path deliberately drops: **full thinking text** (when the source persists it), **untruncated tool arguments/results** (no 60 KB cap), and complete message texts — all joined to the same deterministic span ids the mappers emit. Backend is pluggable via `SessionStore` (`agent_telemetry/store/base.py`); the default is a single SQLite file with FTS5 search at `~/.agent-telemetry/store.sqlite3`. Re-ingesting a changed transcript **replaces** its rows (unlike Langfuse OTel first-write-wins, INT-455).
+The store keeps what the Langfuse path deliberately drops: **full thinking text** (when the source persists it), **untruncated tool arguments/results** (no 60 KB cap), and complete message texts — all joined to the same deterministic span ids the mappers emit. Backend is pluggable via `SessionStore` (`flume/store/base.py`); the default is a single SQLite file with FTS5 search at `~/.flume/store.sqlite3`. Re-ingesting a changed transcript **replaces** its rows (unlike Langfuse OTel first-write-wins, INT-455).
 
 ### Three layers, one writer protocol
 
-1. **Raw archive** (`~/.agent-telemetry/raw/`) — immutable gzip copies of every ingested source file, versioned by content hash, captured *before* parsing so unparseable files are still preserved. `agent-telemetry-analyze raw stats|versions|restore`.
+1. **Raw archive** (`~/.flume/raw/`) — immutable gzip copies of every ingested source file, versioned by content hash, captured *before* parsing so unparseable files are still preserved. `flume analyze raw stats|versions|restore`.
 2. **Analyzed store** — the structured sessions/turns/tools/contents layer described above.
-3. **Retention** — per-tier, per-source TTLs in `~/.agent-telemetry/config.toml`; missing config means keep forever. Enforced by `agent-telemetry-analyze retention run` (or `--apply-retention` on the auto-ingest loop):
+3. **Retention** — per-tier, per-source TTLs in `~/.flume/config.toml`; missing config means keep forever. Enforced by `flume analyze retention run` (or `--apply-retention` on the auto-ingest loop):
 
 ```toml
 [retention]
@@ -26,28 +26,28 @@ analyzed = "forever"
 codex = "30d"
 ```
 
-Vendors are just arguments: every source registers a `SourceAdapter` (`agent_telemetry/store/registry.py`) with `map_spans` + `extract_contents`, and the entire pipeline downstream is adapter-agnostic. `--source anthropic` and `--source openai` resolve to claude-code and codex; adding Gemini or a custom harness is one registry entry plus the two mapper functions.
+Vendors are just arguments: every source registers a `SourceAdapter` (`flume/store/registry.py`) with `map_spans` + `extract_contents`, and the entire pipeline downstream is adapter-agnostic. `--source anthropic` and `--source openai` resolve to claude-code and codex; adding Gemini or a custom harness is one registry entry plus the two mapper functions.
 
 ```bash
 # Ingest everything (reuses the auto-ingest state machine; safe to re-run / cron):
-agent-telemetry-auto-ingest --source claude-code --backend store --once
-agent-telemetry-auto-ingest --source codex --backend store --once --include-archived-codex
+flume ingest --source claude-code --backend store --once
+flume ingest --source codex --backend store --once --include-archived-codex
 
 # Analysis CLI (add --json for agent/script consumption):
-agent-telemetry-analyze overview
-agent-telemetry-analyze sessions --source claude-code --since 7d
-agent-telemetry-analyze show <session-id>
-agent-telemetry-analyze thinking <session-id>          # full thought process
-agent-telemetry-analyze tools --since 7d               # repeats, slowest, largest
-agent-telemetry-analyze tokens --group-by model        # cache split preserved
-agent-telemetry-analyze search "navigat*" --kind thinking
-agent-telemetry-analyze insights --since 7d            # ranked gap findings + suggested actions
-agent-telemetry-analyze audit repeats --since 30d      # identical calls, byte-identical proof
-agent-telemetry-analyze audit bigreads --since 30d     # unranged whole-file Reads
-agent-telemetry-analyze audit toolgaps --since 12w     # recurring throwaway scripts
+flume analyze overview
+flume analyze sessions --source claude-code --since 7d
+flume analyze show <session-id>
+flume analyze thinking <session-id>          # full thought process
+flume analyze tools --since 7d               # repeats, slowest, largest
+flume analyze tokens --group-by model        # cache split preserved
+flume analyze search "navigat*" --kind thinking
+flume analyze insights --since 7d            # ranked gap findings + suggested actions
+flume analyze audit repeats --since 30d      # identical calls, byte-identical proof
+flume analyze audit bigreads --since 30d     # unranged whole-file Reads
+flume analyze audit toolgaps --since 12w     # recurring throwaway scripts
 
 # Web UI + JSON API (http://localhost:8321; endpoints under /api/*):
-agent-telemetry-serve
+flume serve
 ```
 
 Source caveats the store cannot fix: recent Claude Code versions often persist thinking blocks with empty text + signature (encrypted at source), and Codex `reasoning` items are always encrypted — for those sessions the store has counts, not text. Plaintext thinking is captured whole wherever it exists.
@@ -68,7 +68,7 @@ Claude Code CLI and desktop sessions write canonical transcript JSONL files unde
 Use the auto-ingest CLI to discover quiet Claude Code transcript files and checkpoint their state before exporting:
 
 ```bash
-agent-telemetry-auto-ingest --source claude-code --once --dry-run
+flume ingest --source claude-code --once --dry-run
 ```
 
 Dry-run mode lists pending or skipped Claude Code files with session id, trace id, path, mtime, fingerprint, entrypoint metadata, and reason without writing to Langfuse. Real ingest reuses the existing Claude Code JSONL backfill mapper and OTLP exporter, preserving the `claude_code.interaction`, `claude_code.llm_request`, and `claude_code.tool` vocabulary plus Langfuse source metadata/tags. Pass one or more `--claude-root` values for fixture/custom roots; by default discovery walks `~/.claude/projects`.
@@ -84,7 +84,7 @@ Codex CLI, Desktop, and IDE sessions write canonical rollout JSONL files under `
 Use the auto-ingest CLI to discover quiet rollout files and checkpoint their state before exporting:
 
 ```bash
-agent-telemetry-auto-ingest --source codex --once --dry-run
+flume ingest --source codex --once --dry-run
 ```
 
 Dry-run mode lists pending or skipped Codex files with session id, path, mtime, fingerprint, source metadata, and reason without writing to Langfuse. Real ingest reuses the existing Codex rollout mapper and OTLP exporter, preserving the `codex.interaction`, `codex.llm_request`, and `codex.tool` vocabulary plus Langfuse source metadata/tags. Add `--include-archived-codex` to include `~/.codex/archived_sessions/*.jsonl`, or pass one or more `--codex-root` values for fixture/custom roots.
@@ -93,11 +93,11 @@ After ingest, inspect the canonical Codex trace in Langfuse rather than the live
 
 ## Layout
 
-- `agent_telemetry/backfill/` — parsers that turn historical session files into OTel spans.
-- `agent_telemetry/store/` — pluggable session store (SQLite default), full-fidelity content extraction, analysis CLI, HTTP API + web UI.
-- `agent_telemetry/ingest/` — durable source-agnostic auto-ingest state machine and source adapters.
+- `flume/backfill/` — parsers that turn historical session files into OTel spans.
+- `flume/store/` — pluggable session store (SQLite default), full-fidelity content extraction, analysis CLI, HTTP API + web UI.
+- `flume/ingest/` — durable source-agnostic auto-ingest state machine and source adapters.
 - `recipes/` — per-source env/config recipes for live agents, including Codex `trace_exporter` config for the local collector.
-- `agent_telemetry/analysis/` — parity check + reproductions of the `analyze_sessions.py` metrics against Langfuse.
+- `flume/analysis/` — parity check + reproductions of the `analyze_sessions.py` metrics against Langfuse.
 - `infra/langfuse/` — local self-hosted Langfuse v3 stack (docker-compose).
 - `infra/collector/` — local OTel Collector (docker-compose). Single fan-in point on `http://localhost:4318` for backfill + live recipes; forwards to Langfuse with auth.
 - `tests/` — mapping tests with small JSONL fixtures.

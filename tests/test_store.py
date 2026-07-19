@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_telemetry.store.base import open_store
-from agent_telemetry.store.ingest import ingest_path
+from flume.store.base import open_store
+from flume.store.ingest import ingest_path
 
 THINKING_1 = "I should read the file before editing; the bug is in parse()."
 THINKING_2 = "The test failure suggests a missing null check in loader.py."
@@ -370,10 +370,10 @@ def test_session_commands_segmentation(tmp_path: Path) -> None:
 
 
 def test_derive_project() -> None:
-    from agent_telemetry.store.bundle import derive_project
+    from flume.store.bundle import derive_project
 
-    assert derive_project("/Users/james/Code/tools/agent-telemetry") == (
-        "tools/agent-telemetry"
+    assert derive_project("/Users/james/Code/tools/flume") == (
+        "tools/flume"
     )
     assert derive_project(
         "/Users/james/Code/biz/security/crypto-analysis/.claude/worktrees/x-1"
@@ -439,7 +439,7 @@ def test_audit_whole_file_reads(tmp_path: Path) -> None:
 
 
 def test_insights_detect_and_persist(tmp_path: Path) -> None:
-    from agent_telemetry.store.insights import run_insights
+    from flume.store.insights import run_insights
 
     # Build a session with a byte-identical retry loop (6 identical calls).
     events = _claude_events()[:1]
@@ -502,7 +502,7 @@ def test_insights_schema_loop_detects_distinct_payload_retries(
     # A subagent rephrasing its StructuredOutput payload every attempt:
     # never byte-identical (invisible to repeat_waste), but every attempt
     # fails validation the same way.
-    from agent_telemetry.store.insights import run_insights
+    from flume.store.insights import run_insights
 
     schema_error = (
         "Output does not match required schema: "

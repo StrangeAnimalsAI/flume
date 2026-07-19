@@ -12,10 +12,10 @@ import json
 import sqlite3
 from pathlib import Path
 
-from agent_telemetry.store.archive import open_archive
-from agent_telemetry.store.base import open_store
-from agent_telemetry.store.bundle import PIPELINE_VERSION
-from agent_telemetry.store.ingest import ingest_path, rebuild_stale
+from flume.store.archive import open_archive
+from flume.store.base import open_store
+from flume.store.bundle import PIPELINE_VERSION
+from flume.store.ingest import ingest_path, rebuild_stale
 
 
 def _write_session(tmp_path: Path, session_id: str = "sess-1") -> Path:

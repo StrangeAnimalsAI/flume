@@ -1,11 +1,11 @@
-# Claude Code CLI -> local OTel Collector (agent-telemetry).
+# Claude Code CLI -> local OTel Collector (flume).
 #
 # Source from your shell to point `claude` at the local Collector running on
 # http://localhost:4318. The Collector forwards to self-hosted Langfuse with
 # project-scoped basic auth, so this script intentionally carries NO secrets.
 #
 # Usage (one-shot, current shell only):
-#   source /path/to/agent-telemetry/recipes/claude-code-cli.env.sh
+#   source /path/to/flume/recipes/claude-code-cli.env.sh
 #   claude -p "say hi"
 #
 # Usage (persistent, every new shell):

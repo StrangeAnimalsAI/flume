@@ -41,7 +41,7 @@ automatically; find them via `sessions --all` under the parent session):
 - **tool calls**, **wall seconds**, **tokens** (from Agent tool usage)
 - **call precision** — classify each tool call target/map/search/offtarget
   against ground truth (see `_docnav`-aware classifier in
-  `agent_telemetry/store/navtime.py:classify_tool` plus the task's target
+  `flume/store/navtime.py:classify_tool` plus the task's target
   file set)
 
 ## Baseline (2026-07-08, haiku scouts)

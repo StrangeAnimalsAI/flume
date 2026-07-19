@@ -12,7 +12,7 @@ build/
 infra/**/.env
 
 # Local ingest checkpoints and session stores.
-.agent_telemetry_auto_ingest*.sqlite3
+.flume_auto_ingest*.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
 
