@@ -379,6 +379,11 @@ def test_derive_project() -> None:
         "/Users/james/Code/biz/security/crypto-analysis/.claude/worktrees/x-1"
     ) == "security/crypto-analysis"
     assert derive_project(None) is None
+    # Labels must not depend on the analyzing machine's $HOME: a cwd under
+    # any /Users/<name> or /home/<name> derives the same everywhere.
+    assert derive_project("/Users/somebody/Code/demo") == "demo"
+    assert derive_project("/home/alex/projects/tools/flume") == "tools/flume"
+    assert derive_project("/Users/somebody") == "~"
 
 
 def test_audit_repeats_flags_byte_identical(tmp_path: Path) -> None:

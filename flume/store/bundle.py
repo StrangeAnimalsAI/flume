@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ Span = dict[str, Any]
 # Provenance stamp written to every session row. Bump whenever backfill/*,
 # store/extract.py, or this module change what they derive from raw bytes;
 # `flume analyze rebuild --stale` then re-ingests older rows.
-PIPELINE_VERSION = 1
+PIPELINE_VERSION = 2
 
 _ARGS_PREVIEW_MAX = 500
 
@@ -156,18 +157,26 @@ def _tool_row(span: Span) -> dict[str, Any]:
     }
 
 
+# Any macOS/Linux home prefix, not just this machine's $HOME — labels must
+# not depend on where the store is analyzed (CI, containers, shared stores).
+_HOME_PREFIX = re.compile(r"^/(?:Users|home)/[^/]+(?=/|$)")
+
+
 def derive_project(cwd: Any) -> str | None:
     """Short project label from a session cwd.
 
-    Strips $HOME and worktree noise, keeps the last two path segments:
+    Strips the home prefix (this machine's $HOME or any /Users/<name> or
+    /home/<name>) and worktree noise, keeps the last two path segments:
     /home/alex/projects/tools/flume -> tools/flume.
     """
     if not isinstance(cwd, str) or not cwd:
         return None
     path = cwd
     home = str(Path.home())
-    if path.startswith(home):
+    if path == home or path.startswith(home + "/"):
         path = path[len(home) :].lstrip("/")
+    else:
+        path = _HOME_PREFIX.sub("", path).lstrip("/")
     # A worktree cwd belongs to its repo, not to .claude/worktrees/<name>.
     path = path.split("/.claude/")[0].rstrip("/")
     if not path:
