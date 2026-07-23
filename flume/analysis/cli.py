@@ -700,12 +700,17 @@ def _expand(path: Path, source: str) -> list[Path]:
 def _since_ns(window: str | None) -> int | None:
     if not window:
         return None
-    match = re.fullmatch(r"(\d+)([hdw])", window.strip())
-    if not match:
-        raise SystemExit(f"bad --since {window!r}; use forms like 24h, 7d, 2w")
-    value, unit = int(match.group(1)), match.group(2)
-    seconds = value * {"h": 3600, "d": 86400, "w": 604800}[unit]
-    return (int(time.time()) - seconds) * 1_000_000_000
+    from flume.store.config import parse_duration_ns
+
+    try:
+        ttl_ns = parse_duration_ns(window)
+    except ValueError:
+        raise SystemExit(
+            f"bad --since {window!r}; use forms like 24h, 7d, 2w"
+        ) from None
+    if ttl_ns is None:
+        return None
+    return time.time_ns() - ttl_ns
 
 
 def _render(command: str | None, result: Any) -> None:

@@ -215,14 +215,18 @@ def _q(query: dict[str, list[str]], key: str) -> str | None:
 
 
 def _since_ns(window: str | None) -> int | None:
+    """Bad or missing query windows are ignored, not errors."""
     if not window:
         return None
-    match = re.fullmatch(r"(\d+)([hdw])", window.strip())
-    if not match:
+    from flume.store.config import parse_duration_ns
+
+    try:
+        ttl_ns = parse_duration_ns(window)
+    except ValueError:
         return None
-    value, unit = int(match.group(1)), match.group(2)
-    seconds = value * {"h": 3600, "d": 86400, "w": 604800}[unit]
-    return (int(time.time()) - seconds) * 1_000_000_000
+    if ttl_ns is None:
+        return None
+    return time.time_ns() - ttl_ns
 
 
 if __name__ == "__main__":  # pragma: no cover
