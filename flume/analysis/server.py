@@ -174,7 +174,7 @@ def _route(
             limit=int(_q(query, "limit") or 50),
         )
     if path == "/api/audit/toolgaps":
-        from flume.store.audit import script_clusters
+        from flume.analysis.audit import script_clusters
 
         return script_clusters(
             store,
@@ -184,7 +184,7 @@ def _route(
     if path == "/api/insights":
         if _q(query, "stored") == "1":
             return store.list_findings(limit=int(_q(query, "limit") or 50))
-        from flume.store.insights import run_insights
+        from flume.analysis.insights import run_insights
 
         return run_insights(store, since_ns=_since_ns(_q(query, "since") or "7d"))
     if path == "/api/archive":

@@ -1,10 +1,13 @@
-"""Source adapter for harness transcripts.
+"""Harness: everything flume knows about its own agent transcript format.
 
-Maps the harness JSONL format (see transcript.py) to the shared span
-vocabulary (`harness.interaction` / `.llm_request` / `.tool`) and extracts
+Maps the harness JSONL format (see flume/harness/transcript.py, which
+defines and writes it) to the shared span vocabulary
+(`harness.interaction` / `.llm_request` / `.tool`) and extracts
 full-fidelity content rows — including the thinking summaries that are the
 whole point of the harness. Span ids are deterministic from session id +
-event identity, matching the claude-code/codex adapter convention.
+event identity, matching the claude-code/codex convention. No discovery:
+the harness is a push source — it ingests its own transcript when a run
+ends.
 """
 from __future__ import annotations
 
@@ -164,7 +167,7 @@ def harness_to_spans(path: Path) -> list[Span]:
     return spans
 
 
-def extract_harness_contents(path: Path, session_id: str) -> list[ContentRow]:
+def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
     events = _read_events(path)
     rows: list[ContentRow] = []
     seq = 0
@@ -204,7 +207,7 @@ def extract_harness_contents(path: Path, session_id: str) -> list[ContentRow]:
     return rows
 
 
-def probe_harness(path: Path) -> dict[str, Any]:
+def probe(path: Path) -> dict[str, Any]:
     """Cheap pre-parse probe: cwd + harness version from the meta line."""
     try:
         with path.open() as fh:

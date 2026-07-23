@@ -366,13 +366,13 @@ def _cmd_search(store, args) -> list[dict[str, Any]]:
 def _cmd_insights(store, args) -> list[dict[str, Any]]:
     if args.stored:
         return store.list_findings(limit=args.limit)
-    from flume.store.insights import run_insights
+    from flume.analysis.insights import run_insights
 
     return run_insights(store, since_ns=_since_ns(args.since))[: args.limit]
 
 
 def _cmd_hooks(store, args) -> dict[str, Any]:
-    from flume.store.hooks import hook_events, hooks_summary
+    from flume.analysis.hooks import hook_events, hooks_summary
 
     _require_sqlite(store, "hooks")
     events = hook_events(
@@ -416,7 +416,7 @@ def _cmd_experiment_list(store, args) -> list[dict[str, Any]]:
 
 
 def _cmd_experiment_compare(store, args) -> dict[str, Any]:
-    from flume.store.experiments import compare_experiment
+    from flume.analysis.experiments import compare_experiment
 
     _require_sqlite(store, "experiment")
     try:
@@ -543,7 +543,7 @@ def _cmd_audit_bigreads(store, args) -> list[dict[str, Any]]:
 
 
 def _cmd_audit_toolgaps(store, args) -> list[dict[str, Any]]:
-    from flume.store.audit import script_clusters
+    from flume.analysis.audit import script_clusters
 
     return script_clusters(
         store, since_ns=_since_ns(args.since), min_sessions=args.min_sessions
@@ -551,18 +551,19 @@ def _cmd_audit_toolgaps(store, args) -> list[dict[str, Any]]:
 
 
 def _cmd_ingest(store, args) -> dict[str, Any]:
+    from flume.ingest.write import ingest_path
+    from flume.sources import get_adapter
     from flume.store.archive import open_archive
-    from flume.store.ingest import ingest_path
-    from flume.store.registry import get_adapter
 
-    source = get_adapter(args.source).name
+    adapter = get_adapter(args.source)
+    source = adapter.name
     files = _expand(args.path, source)
     archive = None if args.no_raw_archive else open_archive(args.archive_url)
     try:
         ingested, empty, failures = [], 0, []
         for f in files:
             try:
-                outcome = ingest_path(store, source, f, archive=archive)
+                outcome = ingest_path(store, adapter, f, archive=archive)
             except Exception as exc:  # noqa: BLE001 - keep batch going
                 failures.append({"path": str(f), "error": f"{type(exc).__name__}: {exc}"})
                 continue
@@ -584,8 +585,8 @@ def _cmd_ingest(store, args) -> dict[str, Any]:
 
 
 def _cmd_rebuild(store, args) -> dict[str, Any]:
+    from flume.ingest.write import rebuild_stale
     from flume.store.archive import open_archive
-    from flume.store.ingest import rebuild_stale
 
     if not args.stale:
         raise SystemExit("rebuild requires --stale (the only mode implemented)")
@@ -627,7 +628,7 @@ def _cmd_sql(store, args) -> list[dict[str, Any]]:
 
 
 def _cmd_sources(store, args) -> list[dict[str, Any]]:
-    from flume.store.registry import adapters
+    from flume.sources import adapters
 
     return [{"source": a.name, "vendor": a.vendor} for a in adapters()]
 
@@ -671,11 +672,14 @@ def _cmd_retention_run(store, args) -> dict[str, Any]:
     from flume.store.config import load_policy
     from flume.store.retention import run_retention
 
+    from flume.sources import adapters
+
     with open_archive(args.archive_url) as archive:
         return run_retention(
             store=store,
             archive=archive,
             policy=load_policy(args.config),
+            sources=[a.name for a in adapters()],
             dry_run=args.dry_run,
         )
 

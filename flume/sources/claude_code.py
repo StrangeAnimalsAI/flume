@@ -1,19 +1,36 @@
-"""Parse Claude Code JSONL transcripts into OTel-shaped span dicts.
+"""Claude Code: everything flume knows about its transcript format.
 
-Pure data — no OTel SDK, no network. Each transcript maps to one trace with a
+Mapping (`jsonl_to_spans`): each transcript maps to one trace with a
 `claude_code.interaction` root, per-turn `claude_code.llm_request` children,
 and per-tool-call `claude_code.tool` spans nested under the turn that issued
 them. Span IDs are derived from session_id + event identity, so replays are
-idempotent.
+idempotent. Extraction (`extract_contents`): a second full-fidelity pass over
+the same file keyed by the same span ids. Discovery
+(`ClaudeCodeTranscriptSource`): canonical JSONL locations under
+~/.claude/projects, with a cheap metadata read and a `probe` for hierarchy
+hints. Pure data — no network, no SDK.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from flume.sources import DiscoveredTranscript
+from flume.sources.common import (
+    as_string,
+    iso_ts_ns,
+    iter_jsonl_objects,
+    json_text,
+    jsonl_paths,
+    read_jsonl,
+    result_text,
+    unique_sorted,
+)
+from flume.store.base import ContentRow
 
 Span = dict[str, Any]
 
@@ -570,5 +587,208 @@ def _truncate_text(value: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
+
+
+# ---------------------------------------------------------------------------
+# Full-fidelity extraction
+#
+# The mapper above redacts thinking to counts and caps payloads; audits need
+# the complete thought process and untruncated tool I/O. This second pass
+# emits ContentRows keyed by the SAME deterministic span ids `_span_id`
+# produces, so full text joins directly onto the metrics skeleton.
+
+
+def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
+    rows: list[ContentRow] = []
+    seq = 0
+
+    def add(span_id: str | None, kind: str, text: str, ts: int | None) -> None:
+        nonlocal seq
+        if not text:
+            return
+        rows.append(ContentRow(span_id=span_id, kind=kind, seq=seq, text=text, ts_ns=ts))
+        seq += 1
+
+    for ev in read_jsonl(path):
+        ts = iso_ts_ns(ev.get("timestamp"))
+        t = ev.get("type")
+        msg = ev.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+
+        if t == "assistant":
+            turn_uuid = ev.get("uuid") or (str(ts) if ts is not None else "")
+            turn_span = _span_id(session_id, f"turn:{turn_uuid}")
+            if isinstance(content, str):
+                add(turn_span, "assistant_message", content.strip(), ts)
+                continue
+            if not isinstance(content, list):
+                continue
+            for blk in content:
+                if not isinstance(blk, dict):
+                    continue
+                bt = blk.get("type")
+                if bt == "thinking":
+                    add(turn_span, "thinking", blk.get("thinking") or "", ts)
+                elif bt == "text":
+                    add(turn_span, "assistant_message", (blk.get("text") or "").strip(), ts)
+                elif bt == "tool_use":
+                    tid = blk.get("id")
+                    if isinstance(tid, str):
+                        add(
+                            _span_id(session_id, f"tool:{tid}"),
+                            "tool_arguments",
+                            json_text(blk.get("input") or {}),
+                            ts,
+                        )
+            continue
+
+        if t == "user":
+            if isinstance(content, str):
+                add(None, "user_message", content.strip(), ts)
+                continue
+            if not isinstance(content, list):
+                continue
+            for blk in content:
+                if isinstance(blk, str):
+                    add(None, "user_message", blk.strip(), ts)
+                    continue
+                if not isinstance(blk, dict):
+                    continue
+                if blk.get("type") == "tool_result":
+                    tid = blk.get("tool_use_id")
+                    if isinstance(tid, str):
+                        add(
+                            _span_id(session_id, f"tool:{tid}"),
+                            "tool_result",
+                            result_text(blk.get("content")),
+                            ts,
+                        )
+                elif blk.get("type") == "text":
+                    add(None, "user_message", (blk.get("text") or "").strip(), ts)
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Cheap pre-parse probe
+
+
+def probe(path: Path) -> dict[str, Any]:
+    """Hierarchy hints and cwd from the file path or its first lines."""
+    out: dict[str, Any] = {}
+    # Subagent transcripts live at .../<parent-session-id>/subagents/agent-*.jsonl
+    parts = path.parts
+    if "subagents" in parts:
+        index = parts.index("subagents")
+        if index >= 1:
+            out["parent_session_id"] = parts[index - 1]
+            out["is_subagent"] = True
+    # cwd rides on individual events, not on any session header.
+    for index, event in enumerate(iter_jsonl_objects(path)):
+        if index >= 50:
+            break
+        cwd = event.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            out["cwd"] = cwd
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+
+DEFAULT_CLAUDE_PROJECTS_ROOT = Path.home() / ".claude" / "projects"
+
+
+class ClaudeCodeTranscriptSource:
+    """Discover canonical Claude Code JSONL transcripts under project roots."""
+
+    source_type = "claude-code"
+
+    def __init__(self, roots: Sequence[Path | str] | None = None) -> None:
+        self.roots = tuple(
+            Path(root).expanduser().resolve(strict=False)
+            for root in (roots or (DEFAULT_CLAUDE_PROJECTS_ROOT,))
+        )
+
+    def discover(self) -> Iterable[DiscoveredTranscript]:
+        for path in unique_sorted(self._candidate_paths()):
+            metadata = read_transcript_metadata(path)
+            session_id = path.stem
+            metadata.setdefault("session_id", session_id)
+            yield DiscoveredTranscript(
+                source_type=self.source_type,
+                path=path,
+                session_id=session_id,
+                trace_id=trace_id_for_session(session_id),
+                metadata=metadata,
+            )
+
+    def _candidate_paths(self) -> Iterable[Path]:
+        for root in self.roots:
+            yield from jsonl_paths(root, recursive=True)
+
+
+def read_transcript_metadata(path: Path, *, max_lines: int = 200) -> dict[str, Any]:
+    """Extract cheap Claude Code metadata without running the full mapper."""
+    metadata: dict[str, Any] = {"source": "claude-code"}
+    for index, obj in enumerate(iter_jsonl_objects(path)):
+        if index >= max_lines:
+            break
+
+        _merge_event_metadata(metadata, obj)
+        _merge_message_metadata(metadata, obj.get("message"))
+        if _has_enough_metadata(metadata):
+            break
+
+    return metadata
+
+
+def _merge_event_metadata(metadata: dict[str, Any], obj: dict[str, Any]) -> None:
+    event_session_id = as_string(obj.get("sessionId"))
+    if event_session_id:
+        metadata.setdefault("claude_session_id", event_session_id)
+
+    for source_key, metadata_key in (
+        ("cwd", "cwd"),
+        ("version", "version"),
+        ("gitBranch", "git_branch"),
+        ("userType", "user_type"),
+        ("permissionMode", "permission_mode"),
+        ("promptId", "prompt_id"),
+        ("agentId", "agent_id"),
+        ("slug", "slug"),
+    ):
+        value = as_string(obj.get(source_key))
+        if value:
+            metadata.setdefault(metadata_key, value)
+
+    entrypoint = as_string(obj.get("entrypoint"))
+    if entrypoint:
+        metadata.setdefault("entrypoint", entrypoint)
+        metadata.setdefault("surface", entrypoint)
+
+    is_sidechain = obj.get("isSidechain")
+    if isinstance(is_sidechain, bool):
+        metadata.setdefault("is_sidechain", is_sidechain)
+
+
+def _merge_message_metadata(metadata: dict[str, Any], message: Any) -> None:
+    if not isinstance(message, dict):
+        return
+    model = as_string(message.get("model"))
+    if model:
+        metadata.setdefault("model", model)
+
+
+def _has_enough_metadata(metadata: dict[str, Any]) -> bool:
+    return bool(
+        metadata.get("claude_session_id")
+        and metadata.get("entrypoint")
+        and metadata.get("version")
+        and metadata.get("model")
+    )
 
 

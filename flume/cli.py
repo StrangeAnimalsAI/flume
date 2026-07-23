@@ -19,9 +19,9 @@ _SUBCOMMANDS: dict[str, str] = {
 
 def _resolve(name: str) -> Callable[[list[str] | None], int]:
     if name == "analyze":
-        from flume.store.cli import main
+        from flume.analysis.cli import main
     elif name == "serve":
-        from flume.store.server import main
+        from flume.analysis.server import main
     elif name == "ingest":
         from flume.ingest.cli import main
     elif name == "harness":

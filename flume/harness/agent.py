@@ -165,12 +165,13 @@ def _run_bash(
 
 
 def _ingest(path: Path) -> None:
+    from flume.ingest.write import ingest_path
+    from flume.sources import get_adapter
     from flume.store.archive import open_archive
     from flume.store.base import open_store
-    from flume.store.ingest import ingest_path
 
     with open_store() as store, open_archive() as archive:
-        outcome = ingest_path(store, "harness", path, archive=archive)
+        outcome = ingest_path(store, get_adapter("harness"), path, archive=archive)
     if outcome is not None:
         print(f"[ingested: {outcome.session_id}]")
 

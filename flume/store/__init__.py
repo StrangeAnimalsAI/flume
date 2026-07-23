@@ -1,9 +1,12 @@
-"""Pluggable local session store — the system of record for agent sessions.
+"""Pluggable session store — the system of record for agent sessions.
 
-The backfill mappers stay the source of truth for structure and metrics;
-this package adds a storage backend that keeps FULL session fidelity
-(thinking blocks, untruncated tool payloads) and a query surface for
-audits — CLI for agents, HTTP API + web UI for humans.
+The engine: schema and storage interface (`base`), the sqlite backend
+(`sqlite`), normal-form-to-rows assembly (`bundle`), the immutable raw
+archive (`archive`), and retention (`retention`, `config`). Source
+formats live in `flume.sources`; the write path in `flume.ingest`;
+query-side analytics and the web viewer in `flume.analysis`. This
+package imports none of them — swap the backend via `open_store(url)`
+and nothing upstream changes.
 """
 from flume.store.base import SessionStore, open_store
 

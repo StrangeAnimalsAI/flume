@@ -10,7 +10,7 @@ from typing import Any
 
 from flume.ingest.fingerprint import FileFingerprint, fingerprint_file, is_quiet
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
-from flume.ingest.types import DiscoveredTranscript, TranscriptSource
+from flume.sources import DiscoveredTranscript, TranscriptSource
 
 
 @dataclass(frozen=True)

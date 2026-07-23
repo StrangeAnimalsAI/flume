@@ -7,12 +7,12 @@ import sys
 import time
 from pathlib import Path
 
-from flume.ingest.claude_code import ClaudeCodeTranscriptSource
-from flume.ingest.codex import DEFAULT_CODEX_ARCHIVED_ROOT, CodexRolloutSource
 from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
-from flume.ingest.types import TranscriptSource
+from flume.sources import TranscriptSource
+from flume.sources.claude_code import ClaudeCodeTranscriptSource
+from flume.sources.codex import DEFAULT_CODEX_ARCHIVED_ROOT, CodexRolloutSource
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,6 +42,7 @@ def _open_backends(args: argparse.Namespace, parser: argparse.ArgumentParser):
 def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
     if not args.apply_retention or session_store is None or archive is None:
         return
+    from flume.sources import adapters
     from flume.store.config import load_policy
     from flume.store.retention import run_retention
 
@@ -49,6 +50,7 @@ def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
         store=session_store,
         archive=archive,
         policy=load_policy(),
+        sources=[a.name for a in adapters()],
         dry_run=args.dry_run,
     )
     _print_summary({"retention": report})
@@ -223,16 +225,20 @@ def _source_and_ingest(
             if args.codex_archived_root is not None
             else DEFAULT_CODEX_ARCHIVED_ROOT,
         )
-        from flume.store.ingest import store_ingest_function
+        from flume.ingest.write import store_ingest_function
+        from flume.sources import get_adapter
 
-        return source, store_ingest_function("codex", session_store, archive)
+        return source, store_ingest_function(
+            get_adapter("codex"), session_store, archive
+        )
 
     if source_name == "claude-code":
         source = ClaudeCodeTranscriptSource(args.claude_root)
-        from flume.store.ingest import store_ingest_function
+        from flume.ingest.write import store_ingest_function
+        from flume.sources import get_adapter
 
         return source, store_ingest_function(
-            "claude-code", session_store, archive
+            get_adapter("claude-code"), session_store, archive
         )
 
     parser.error(
@@ -247,7 +253,7 @@ def _canonical_source(name: str) -> str:
     if name == "fake":
         return name
     try:
-        from flume.store.registry import get_adapter
+        from flume.sources import get_adapter
 
         return get_adapter(name).name
     except ValueError:

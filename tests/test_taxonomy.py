@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from flume.analysis.cli import main
 from flume.store.base import open_store
-from flume.store.cli import main
 from flume.store.taxonomy import tool_kind, tool_vendor
 
 

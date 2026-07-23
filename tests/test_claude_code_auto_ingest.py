@@ -5,14 +5,14 @@ import os
 import time
 from pathlib import Path
 
-from flume.backfill.claude_code import trace_id_for_session
-from flume.ingest.claude_code import (
-    ClaudeCodeTranscriptSource,
-    read_transcript_metadata,
-)
 from flume.ingest.cli import main
 from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
+from flume.sources.claude_code import (
+    ClaudeCodeTranscriptSource,
+    read_transcript_metadata,
+    trace_id_for_session,
+)
 
 
 NOW = 1_800_000_000.0

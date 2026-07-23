@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.ingest.runner import IngestOutcome, IngestRequest
-from flume.ingest.types import DiscoveredTranscript
+from flume.sources import DiscoveredTranscript
 
 
 class FakeTranscriptSource:

@@ -19,7 +19,7 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from flume.store.navtime import classify_tool, nav_summary, session_nav_shares
+from flume.analysis.navtime import classify_tool, nav_summary, session_nav_shares
 
 DAY_NS = 86_400 * 1_000_000_000
 _FILE_ARG = re.compile(r'"file_path":\s*"([^"]+)"')

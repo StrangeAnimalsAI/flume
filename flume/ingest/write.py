@@ -1,17 +1,19 @@
-"""Ingest session files: raw archive first, then the analyzed store.
+"""The write path: archive raw bytes first, then map/extract/persist.
 
-Two entry points:
+Three entry points:
 
-- `store_ingest_function(source, store, archive)` returns an IngestFunction
-  for the existing auto-ingest runner, so the discover/quiet/fingerprint
-  state machine drives the store sink.
-- `ingest_path(store, source, path, metadata, archive)` ingests one file
-  directly, used by the analyze CLI's `ingest` subcommand.
+- `ingest_path(store, adapter, path, ...)` ingests one file through an
+  explicit `SourceAdapter`. Raw capture happens BEFORE parsing: even a
+  file the mapper cannot handle yet is preserved durably.
+- `store_ingest_function(adapter, store, archive)` wraps `ingest_path`
+  as an IngestFunction so the discover/quiet/fingerprint state machine
+  drives the store sink.
+- `rebuild_stale(store, archive, ...)` re-ingests sessions built by an
+  older pipeline version, resolving each session's recorded source name
+  through the adapter registry.
 
-`source` resolves through the adapter registry, so it accepts either a
-source name ("claude-code", "codex") or an unambiguous vendor alias
-("anthropic", "openai"). Raw capture happens BEFORE parsing: even a file
-the mapper cannot handle yet is preserved durably.
+The store engine never resolves adapters; callers pass one in (resolve
+names with `flume.sources.get_adapter`).
 """
 from __future__ import annotations
 
@@ -22,15 +24,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from flume.ingest.runner import IngestOutcome, IngestRequest
+from flume.sources import SourceAdapter, get_adapter
 from flume.store.archive import RawArchive
 from flume.store.base import SessionStore
 from flume.store.bundle import PIPELINE_VERSION, bundle_from_spans
-from flume.store.registry import get_adapter
 
 
 def ingest_path(
     store: SessionStore,
-    source: str,
+    adapter: SourceAdapter,
     path: Path,
     metadata: dict[str, Any] | None = None,
     *,
@@ -39,7 +41,6 @@ def ingest_path(
     """Archive + map + extract + persist one session file.
 
     Returns None if the file yields no session (still archived)."""
-    adapter = get_adapter(source)
     if adapter.probe is not None:
         probed = adapter.probe(path)
         metadata = {**probed, **(metadata or {})}
@@ -90,7 +91,7 @@ def _capture(
 
 
 def store_ingest_function(
-    source: str,
+    adapter: SourceAdapter,
     store: SessionStore,
     archive: RawArchive | None = None,
 ) -> Callable[[IngestRequest], IngestOutcome | None]:
@@ -99,7 +100,7 @@ def store_ingest_function(
     def ingest(request: IngestRequest) -> IngestOutcome | None:
         metadata = dict(request.transcript.metadata or {})
         outcome = ingest_path(
-            store, source, request.transcript.path, metadata, archive=archive
+            store, adapter, request.transcript.path, metadata, archive=archive
         )
         if outcome is None:
             # Empty/unparseable transcript: report ids so state is tracked.
@@ -146,9 +147,10 @@ def rebuild_stale(
             failed.append({"session_id": session_id, "error": "no source recorded"})
             continue
         try:
+            adapter = get_adapter(row["source"])
             original = Path(row["file_path"]) if row.get("file_path") else None
             if original is not None and original.is_file():
-                ingest_path(store, row["source"], original, metadata, archive=archive)
+                ingest_path(store, adapter, original, metadata, archive=archive)
                 from_original += 1
             else:
                 versions = archive.versions(session_id)
@@ -161,7 +163,7 @@ def rebuild_stale(
                     # source probes key off the path's stem/shape.
                     name = Path(entry.original_path).name or f"{session_id}.jsonl"
                     restored = archive.restore(entry, Path(tmp) / name)
-                    ingest_path(store, row["source"], restored, metadata)
+                    ingest_path(store, adapter, restored, metadata)
                 from_archive += 1
             rebuilt.append(session_id)
         except Exception as exc:  # noqa: BLE001 - keep the batch going

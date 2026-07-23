@@ -12,10 +12,11 @@ import json
 import sqlite3
 from pathlib import Path
 
+from flume.ingest.write import ingest_path, rebuild_stale
+from flume.sources import get_adapter
 from flume.store.archive import open_archive
 from flume.store.base import open_store
 from flume.store.bundle import PIPELINE_VERSION
-from flume.store.ingest import ingest_path, rebuild_stale
 
 
 def _write_session(tmp_path: Path, session_id: str = "sess-1") -> Path:
@@ -56,7 +57,7 @@ def _mark_stale(tmp_path: Path, session_id: str) -> None:
 def test_ingest_stamps_provenance(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", src)
+        ingest_path(store, get_adapter("claude-code"), src)
         session = store.get_session("sess-1")
 
     assert session is not None
@@ -67,7 +68,7 @@ def test_ingest_stamps_provenance(tmp_path: Path) -> None:
 def test_stale_sessions_and_overview_count(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", src)
+        ingest_path(store, get_adapter("claude-code"), src)
         assert store.stale_sessions(PIPELINE_VERSION) == []
         assert store.overview()["totals"]["stale_sessions"] == 0
 
@@ -83,7 +84,7 @@ def test_pre_provenance_store_migrates_as_stale(tmp_path: Path) -> None:
     # NULL-versioned, i.e. stale, after the ALTER migration.
     src = _write_session(tmp_path)
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", src)
+        ingest_path(store, get_adapter("claude-code"), src)
     conn = sqlite3.connect(f"{tmp_path}/store.sqlite3")
     with conn:
         for column in ("raw_sha256", "pipeline_version"):
@@ -105,7 +106,7 @@ def test_rebuild_from_original_file(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        ingest_path(store, "claude-code", src, archive=archive)
+        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
     _mark_stale(tmp_path, "sess-1")
 
     with (
@@ -127,7 +128,7 @@ def test_rebuild_from_archive_after_vendor_pruned(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        ingest_path(store, "claude-code", src, archive=archive)
+        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
     _mark_stale(tmp_path, "sess-1")
     src.unlink()  # vendor app pruned the transcript
 
@@ -151,7 +152,7 @@ def test_rebuild_from_archive_after_vendor_pruned(tmp_path: Path) -> None:
 def test_rebuild_reports_missing_raw(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", src)  # no archive
+        ingest_path(store, get_adapter("claude-code"), src)  # no archive
     _mark_stale(tmp_path, "sess-1")
     src.unlink()
 
@@ -171,7 +172,7 @@ def test_rebuild_dry_run_changes_nothing(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        ingest_path(store, "claude-code", src, archive=archive)
+        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
     _mark_stale(tmp_path, "sess-1")
 
     with (

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from flume.backfill.codex import rollout_to_spans
+from flume.sources.codex import rollout_to_spans
 
 
 def _write_jsonl(path: Path, events: list[dict]) -> None:

@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from flume.ingest.write import ingest_path
+from flume.sources import get_adapter
 from flume.store.base import open_store
-from flume.store.ingest import ingest_path
 
 THINKING_1 = "I should read the file before editing; the bug is in parse()."
 THINKING_2 = "The test failure suggests a missing null check in loader.py."
@@ -171,13 +172,15 @@ def _codex_events() -> list[dict]:
 def _ingest_claude(store, tmp_path: Path, session_id: str = "sess-claude-1"):
     path = tmp_path / f"{session_id}.jsonl"
     _write_jsonl(path, _claude_events())
-    return ingest_path(store, "claude-code", path, {"cwd": "/Users/james/Code/demo"})
+    return ingest_path(
+        store, get_adapter("claude-code"), path, {"cwd": "/Users/james/Code/demo"}
+    )
 
 
 def _ingest_codex(store, tmp_path: Path):
     path = tmp_path / "rollout-2026-04-21T09-00-00-codex-sess-1.jsonl"
     _write_jsonl(path, _codex_events())
-    return ingest_path(store, "codex", path)
+    return ingest_path(store, get_adapter("codex"), path)
 
 
 def test_thinking_blocks_stored_in_full(tmp_path: Path) -> None:
@@ -260,7 +263,7 @@ def test_duplicate_event_uuid_dedupes_to_last(tmp_path: Path) -> None:
     _write_jsonl(path, events)
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        assert ingest_path(store, "claude-code", path) is not None
+        assert ingest_path(store, get_adapter("claude-code"), path) is not None
         session = store.get_session("sess-dup")
 
     assert session is not None
@@ -312,8 +315,8 @@ def test_session_hierarchy_and_project(tmp_path: Path) -> None:
     _write_jsonl(child_path, _claude_events())
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", parent_path, {"cwd": "/Users/james/Code/demo"})
-        ingest_path(store, "claude-code", child_path, {"cwd": "/Users/james/Code/demo"})
+        ingest_path(store, get_adapter("claude-code"), parent_path, {"cwd": "/Users/james/Code/demo"})
+        ingest_path(store, get_adapter("claude-code"), child_path, {"cwd": "/Users/james/Code/demo"})
 
         top = store.list_sessions(top_level_only=True)
         assert [s["session_id"] for s in top] == [parent_id]
@@ -354,7 +357,7 @@ def test_session_commands_segmentation(tmp_path: Path) -> None:
     _write_jsonl(path, events)
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", path)
+        ingest_path(store, get_adapter("claude-code"), path)
         commands = store.session_commands("sess-cmd")
 
     assert [c["prompt"] for c in commands] == [
@@ -425,7 +428,7 @@ def test_audit_repeats_flags_byte_identical(tmp_path: Path) -> None:
     _write_jsonl(path, events)
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", path)
+        ingest_path(store, get_adapter("claude-code"), path)
         repeats = store.audit_repeats()
 
     assert len(repeats) == 1
@@ -444,7 +447,7 @@ def test_audit_whole_file_reads(tmp_path: Path) -> None:
 
 
 def test_insights_detect_and_persist(tmp_path: Path) -> None:
-    from flume.store.insights import run_insights
+    from flume.analysis.insights import run_insights
 
     # Build a session with a byte-identical retry loop (6 identical calls).
     events = _claude_events()[:1]
@@ -486,7 +489,7 @@ def test_insights_detect_and_persist(tmp_path: Path) -> None:
     _write_jsonl(path, events)
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", path)
+        ingest_path(store, get_adapter("claude-code"), path)
         findings = run_insights(store)
         kinds = {f["kind"] for f in findings}
         assert "repeat_waste" in kinds
@@ -507,7 +510,7 @@ def test_insights_schema_loop_detects_distinct_payload_retries(
     # A subagent rephrasing its StructuredOutput payload every attempt:
     # never byte-identical (invisible to repeat_waste), but every attempt
     # fails validation the same way.
-    from flume.store.insights import run_insights
+    from flume.analysis.insights import run_insights
 
     schema_error = (
         "Output does not match required schema: "
@@ -553,7 +556,7 @@ def test_insights_schema_loop_detects_distinct_payload_retries(
     _write_jsonl(path, events)
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, "claude-code", path)
+        ingest_path(store, get_adapter("claude-code"), path)
         findings = run_insights(store)
 
     loops = [f for f in findings if f["kind"] == "schema_loop"]

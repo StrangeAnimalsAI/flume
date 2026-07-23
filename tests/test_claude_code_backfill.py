@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from flume.backfill.claude_code import jsonl_to_spans
+from flume.sources.claude_code import jsonl_to_spans
 
 
 def _write_jsonl(path: Path, events: list[dict]) -> None:

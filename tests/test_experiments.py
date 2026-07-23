@@ -9,9 +9,9 @@ The load-bearing guarantees:
 """
 from __future__ import annotations
 
+from flume.analysis.experiments import compare_experiment
+from flume.analysis.navtime import classify_tool, session_nav_shares
 from flume.store.base import ContentRow, SessionBundle
-from flume.store.experiments import compare_experiment
-from flume.store.navtime import classify_tool, session_nav_shares
 from flume.store.sqlite import SqliteSessionStore
 
 HOUR_NS = 3600 * 1_000_000_000
@@ -245,7 +245,7 @@ def test_compare_experiment_baseline_vs_tagged(tmp_path):
 
 
 def test_read_used_share_derived_from_edits_and_mentions(tmp_path):
-    from flume.store.experiments import _read_used_share
+    from flume.analysis.experiments import _read_used_share
 
     second = 1_000_000_000
     bundle = _bundle(

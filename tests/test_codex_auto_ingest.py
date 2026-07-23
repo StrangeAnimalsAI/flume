@@ -5,11 +5,14 @@ import os
 import time
 from pathlib import Path
 
-from flume.backfill.codex import trace_id_for_session
 from flume.ingest.cli import main
-from flume.ingest.codex import CodexRolloutSource, read_rollout_metadata
 from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
+from flume.sources.codex import (
+    CodexRolloutSource,
+    read_rollout_metadata,
+    trace_id_for_session,
+)
 
 
 NOW = 1_800_000_000.0

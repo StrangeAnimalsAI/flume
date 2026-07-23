@@ -1,9 +1,14 @@
-"""Parse Codex rollout JSONL files into OTel-shaped span dicts.
+"""Codex: everything flume knows about its rollout format.
 
-Pure data — no OTel SDK, no network. Each rollout file maps to one trace with
+Mapping (`rollout_to_spans`): each rollout file maps to one trace with
 a `codex.interaction` root, per-LLM-request `codex.llm_request` children, and
 per-tool-call `codex.tool` spans nested under the turn that issued them. IDs
 are derived from session_id + event identity, so replays are idempotent.
+Extraction (`extract_contents`): a second full-fidelity pass keyed by the
+same span ids (rollout `reasoning` items carry only encrypted blobs — no
+plaintext thinking exists to extract; a source limitation, not a store
+choice). Discovery (`CodexRolloutSource`): rollout locations under
+~/.codex/sessions, plus a `probe` for sub-agent hierarchy hints.
 
 # Rollout format (as observed in ~/.codex/sessions/2026/**/rollout-*.jsonl)
 
@@ -77,9 +82,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from flume.sources import DiscoveredTranscript
+from flume.sources.common import (
+    as_string,
+    iso_ts_ns,
+    iter_jsonl_objects,
+    json_text,
+    jsonl_paths,
+    read_jsonl,
+    unique_sorted,
+)
+from flume.store.base import ContentRow
 
 Span = dict[str, Any]
 
@@ -734,5 +752,189 @@ def _truncate_text(value: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
+
+
+# ---------------------------------------------------------------------------
+# Full-fidelity extraction
+
+
+def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
+    rows: list[ContentRow] = []
+    seq = 0
+
+    def add(span_id: str | None, kind: str, text: str, ts: int | None) -> None:
+        nonlocal seq
+        if not text:
+            return
+        rows.append(ContentRow(span_id=span_id, kind=kind, seq=seq, text=text, ts_ns=ts))
+        seq += 1
+
+    for ev in read_jsonl(path):
+        ts = iso_ts_ns(ev.get("timestamp"))
+        p = ev.get("payload")
+        if not isinstance(p, dict):
+            continue
+        pt = p.get("type")
+
+        if pt == "user_message":
+            text = p.get("message")
+            if isinstance(text, str):
+                add(None, "user_message", text.strip(), ts)
+        elif pt == "agent_message":
+            # Skip streaming "commentary" fragments; keep final messages.
+            if p.get("phase") in (None, "final"):
+                text = p.get("message")
+                if isinstance(text, str):
+                    add(None, "assistant_message", text.strip(), ts)
+        elif pt in ("function_call", "custom_tool_call"):
+            call_id = p.get("call_id")
+            args = p.get("arguments") if pt == "function_call" else p.get("input")
+            if isinstance(call_id, str):
+                add(
+                    _span_id(session_id, f"tool:{call_id}"),
+                    "tool_arguments",
+                    args if isinstance(args, str) else json_text(args),
+                    ts,
+                )
+        elif pt in ("function_call_output", "custom_tool_call_output"):
+            call_id = p.get("call_id")
+            output = p.get("output")
+            if isinstance(call_id, str):
+                add(
+                    _span_id(session_id, f"tool:{call_id}"),
+                    "tool_result",
+                    output if isinstance(output, str) else json_text(output),
+                    ts,
+                )
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Cheap pre-parse probe
+
+
+def probe(path: Path) -> dict[str, Any]:
+    """Sub-agent hierarchy hints from the session_meta line."""
+    # session_meta.source.subagent.thread_spawn.parent_thread_id links a
+    # spawned Codex thread to its parent session.
+    for index, event in enumerate(iter_jsonl_objects(path)):
+        if index >= 5:
+            break
+        if event.get("type") != "session_meta":
+            continue
+        source = (event.get("payload") or {}).get("source")
+        if isinstance(source, dict):
+            spawn = (source.get("subagent") or {}).get("thread_spawn") or {}
+            parent = spawn.get("parent_thread_id")
+            out: dict[str, Any] = {"is_subagent": True}
+            if isinstance(parent, str) and parent:
+                out["parent_session_id"] = parent
+            return out
+        return {}
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+
+DEFAULT_CODEX_SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
+DEFAULT_CODEX_ARCHIVED_ROOT = Path.home() / ".codex" / "archived_sessions"
+
+
+class CodexRolloutSource:
+    """Discover Codex rollout JSONL files under session roots."""
+
+    source_type = "codex"
+
+    def __init__(
+        self,
+        roots: Sequence[Path | str] | None = None,
+        *,
+        include_archived: bool = False,
+        archived_root: Path | str = DEFAULT_CODEX_ARCHIVED_ROOT,
+    ) -> None:
+        self.roots = tuple(
+            Path(root).expanduser().resolve(strict=False)
+            for root in (roots or (DEFAULT_CODEX_SESSIONS_ROOT,))
+        )
+        self.include_archived = include_archived
+        self.archived_root = Path(archived_root).expanduser().resolve(strict=False)
+
+    def discover(self) -> Iterable[DiscoveredTranscript]:
+        for path in unique_sorted(self._candidate_paths()):
+            metadata = read_rollout_metadata(path)
+            session_id = as_string(metadata.get("session_id")) or path.stem
+            yield DiscoveredTranscript(
+                source_type=self.source_type,
+                path=path,
+                session_id=session_id,
+                trace_id=trace_id_for_session(session_id),
+                metadata=metadata,
+            )
+
+    def _candidate_paths(self) -> Iterable[Path]:
+        for root in self.roots:
+            yield from jsonl_paths(root, recursive=True)
+        if self.include_archived:
+            yield from jsonl_paths(self.archived_root, recursive=False)
+
+
+def read_rollout_metadata(path: Path, *, max_lines: int = 200) -> dict[str, Any]:
+    """Extract cheap Codex metadata without running the full mapper."""
+    metadata: dict[str, Any] = {}
+    for index, obj in enumerate(iter_jsonl_objects(path)):
+        if index >= max_lines:
+            break
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            continue
+
+        if obj.get("type") == "session_meta":
+            _merge_session_meta(metadata, payload)
+            continue
+
+        if obj.get("type") == "turn_context":
+            model = payload.get("model")
+            if isinstance(model, str) and model:
+                metadata.setdefault("model", model)
+
+        if metadata.get("session_id") and metadata.get("model"):
+            break
+
+    return metadata
+
+
+def _merge_session_meta(metadata: dict[str, Any], payload: dict[str, Any]) -> None:
+    session_id = payload.get("id")
+    if isinstance(session_id, str) and session_id:
+        metadata.setdefault("session_id", session_id)
+
+    for source_key, metadata_key in (
+        ("originator", "originator"),
+        ("cli_version", "cli_version"),
+        ("cwd", "cwd"),
+        ("model_provider", "model_provider"),
+    ):
+        value = payload.get(source_key)
+        if isinstance(value, str) and value:
+            metadata.setdefault(metadata_key, value)
+
+    surface = _surface(payload.get("source"))
+    if surface:
+        metadata.setdefault("source", surface)
+        metadata.setdefault("surface", surface)
+
+
+def _surface(value: Any) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        if "subagent" in value:
+            return "subagent"
+        for key, nested in value.items():
+            if isinstance(key, str) and nested:
+                return key
+    return None
 
 

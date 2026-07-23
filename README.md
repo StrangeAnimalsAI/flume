@@ -28,6 +28,21 @@ Three layers, each independently rebuildable:
 Sources are pluggable adapters (`claude-code`, `codex`, and a traced
 `harness`) — the vendor is just an argument.
 
+The package layout mirrors the pipeline, and dependencies point one way
+(`cli → ingest → sources → store`):
+
+- `flume/sources/` — one module per vendor: format mapping, full-fidelity
+  extraction, and discovery. The only code that knows any vendor's format.
+- `flume/ingest/` — the source-agnostic pipeline: discovery loop, durable
+  checkpoints, and the archive-then-persist write path.
+- `flume/store/` — the engine: storage interface, sqlite backend, raw
+  archive, retention. Swappable via `open_store(url)` / `open_archive(url)`;
+  it never imports the layers above.
+- `flume/analysis/` — insight detectors, experiment comparison, and the
+  `analyze` CLI, all through the `SessionStore` interface.
+- `flume/harness/` — the traced agent app; its transcript format registers
+  in `sources` like any vendor.
+
 ## Interfaces
 
 | Command | What it does |

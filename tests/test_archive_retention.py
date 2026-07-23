@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from flume.ingest.write import ingest_path
+from flume.sources import get_adapter
 from flume.store.archive import open_archive
 from flume.store.base import open_store
 from flume.store.config import (
@@ -13,9 +15,9 @@ from flume.store.config import (
     load_policy,
     parse_duration_ns,
 )
-from flume.store.ingest import ingest_path
-from flume.store.registry import get_adapter
 from flume.store.retention import run_retention
+
+ALL_SOURCES = ["claude-code", "codex", "harness"]
 
 DAY_NS = 86_400_000_000_000
 
@@ -89,21 +91,21 @@ def test_ingest_path_archives_raw(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        outcome = ingest_path(store, "claude-code", src, archive=archive)
+        outcome = ingest_path(store, get_adapter("claude-code"), src, archive=archive)
         assert outcome is not None and outcome.session_id == "sess-1"
         assert len(archive.versions("sess-1")) == 1
         assert archive.stats()[0]["source"] == "claude-code"
 
 
 def test_mapper_failure_still_archives_raw(tmp_path: Path, monkeypatch) -> None:
-    from flume.store import registry
-    from flume.store.registry import SourceAdapter
+    import flume.sources as sources
+    from flume.sources import SourceAdapter
 
     def boom(path: Path):
         raise OverflowError("string longer than INT_MAX bytes")
 
     monkeypatch.setitem(
-        registry._ADAPTERS,
+        sources._ADAPTERS,
         "boom",
         SourceAdapter(name="boom", vendor="test", map_spans=boom,
                       extract_contents=lambda p, s: []),
@@ -114,7 +116,7 @@ def test_mapper_failure_still_archives_raw(tmp_path: Path, monkeypatch) -> None:
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
         with pytest.raises(OverflowError):
-            ingest_path(store, "boom", src, archive=archive)
+            ingest_path(store, get_adapter("boom"), src, archive=archive)
         assert len(archive.versions("giant")) == 1  # raw survived the crash
 
 
@@ -163,7 +165,7 @@ def test_retention_deletes_expired_tiers_only(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        ingest_path(store, "claude-code", src, archive=archive)
+        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
         entry = archive.versions("sess-1")[0]
         # Session ended 2026-04-20; blob captured "now" (test runtime).
         session = store.get_session("sess-1")
@@ -176,13 +178,18 @@ def test_retention_deletes_expired_tiers_only(tmp_path: Path) -> None:
         now_ns = session["ended_at_ns"] + 2 * DAY_NS  # 2 days after session end
 
         report = run_retention(
-            store=store, archive=archive, policy=policy, now_ns=now_ns, dry_run=True
+            store=store,
+            archive=archive,
+            policy=policy,
+            sources=ALL_SOURCES,
+            now_ns=now_ns,
+            dry_run=True,
         )
         assert report["analyzed"]["claude-code"]["deleted"] == 1
         assert store.get_session("sess-1") is not None  # dry run deletes nothing
 
         report = run_retention(
-            store=store, archive=archive, policy=policy, now_ns=now_ns
+            store=store, archive=archive, policy=policy, sources=ALL_SOURCES, now_ns=now_ns
         )
         assert report["analyzed"]["claude-code"]["deleted"] == 1
         assert store.get_session("sess-1") is None  # analyzed pruned
@@ -195,7 +202,7 @@ def test_retention_deletes_expired_raw_blobs(tmp_path: Path) -> None:
         open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
-        ingest_path(store, "claude-code", src, archive=archive)
+        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
         entry = archive.versions("sess-1")[0]
         blob = Path(f"{tmp_path}/raw/blobs") / entry.blob_path
         assert blob.is_file()
@@ -204,7 +211,7 @@ def test_retention_deletes_expired_raw_blobs(tmp_path: Path) -> None:
         now_ns = entry.captured_at_ns + 2 * DAY_NS
 
         report = run_retention(
-            store=store, archive=archive, policy=policy, now_ns=now_ns
+            store=store, archive=archive, policy=policy, sources=ALL_SOURCES, now_ns=now_ns
         )
         assert report["raw"]["claude-code"]["deleted"] == 1
         assert archive.versions("sess-1") == []

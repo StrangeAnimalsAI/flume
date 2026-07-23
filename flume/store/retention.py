@@ -7,12 +7,12 @@ from cron/launchd, the auto-ingest loop, or by hand (`retention run`).
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from typing import Any
 
 from flume.store.archive import RawArchive
 from flume.store.base import SessionStore
 from flume.store.config import RetentionPolicy
-from flume.store.registry import adapters
 
 
 def run_retention(
@@ -20,14 +20,16 @@ def run_retention(
     store: SessionStore,
     archive: RawArchive,
     policy: RetentionPolicy,
+    sources: Iterable[str],
     now_ns: int | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    """Enforce TTLs for the given source names (callers resolve them from
+    the adapter registry; the engine does not know it exists)."""
     now = time.time_ns() if now_ns is None else now_ns
     report: dict[str, Any] = {"dry_run": dry_run, "raw": {}, "analyzed": {}}
 
-    for adapter in adapters():
-        source = adapter.name
+    for source in sources:
 
         raw_ttl = policy.raw_ttl_ns(source)
         if raw_ttl is None:

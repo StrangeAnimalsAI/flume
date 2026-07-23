@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.ingest.fingerprint import FileFingerprint
-from flume.ingest.types import DiscoveredTranscript
+from flume.sources import DiscoveredTranscript
 
 
 class IngestStatus(StrEnum):

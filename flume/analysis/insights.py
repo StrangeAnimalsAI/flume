@@ -20,8 +20,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from flume.store.audit import script_clusters
-from flume.store.navtime import nav_summary, session_nav_shares
+from flume.analysis.audit import script_clusters
+from flume.analysis.navtime import nav_summary, session_nav_shares
 
 Finding = dict[str, Any]
 
