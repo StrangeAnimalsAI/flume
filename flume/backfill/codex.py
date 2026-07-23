@@ -81,8 +81,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flume.backfill.langfuse import enrich_trace_attrs
-
 Span = dict[str, Any]
 
 # Match the 60 KB cap used by Claude Code's OTel log path.
@@ -317,12 +315,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
     # Sort tools by start to keep a stable order (deterministic for
     # idempotent byte-identical dry-runs).
     tool_spans.sort(key=lambda s: (s["start_unix_nano"], s["span_id"]))
-    return enrich_trace_attrs(
-        [root, *turn_spans, *tool_spans],
-        agent_source="codex",
-        agent_family="codex",
-        agent_surface=session_source,
-    )
+    return [root, *turn_spans, *tool_spans]
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
@@ -743,66 +736,3 @@ def _truncate_text(value: str, max_chars: int) -> str:
     return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
 
 
-def _cli(argv: list[str] | None = None) -> int:
-    """Entry point: `python -m flume.backfill.codex`.
-
-    Mirrors the INT-432 CLI: `--path` accepts a file or a directory (the
-    directory is globbed for `rollout-*.jsonl` recursively, matching the
-    `~/.codex/sessions/YYYY/MM/DD/` layout on disk). `--dry-run` dumps the
-    span-dicts as pretty JSON to stdout.
-    """
-    import argparse
-    import sys
-
-    parser = argparse.ArgumentParser(
-        prog="python -m flume.backfill.codex",
-        description="Replay a Codex rollout JSONL as OTel spans.",
-    )
-    parser.add_argument(
-        "--path",
-        type=Path,
-        required=True,
-        help="Path to a rollout-*.jsonl file, or a directory to walk.",
-    )
-    parser.add_argument(
-        "--endpoint",
-        default="http://localhost:4318/v1/traces",
-        help="OTLP-HTTP traces endpoint (default: %(default)s).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Dump span-dicts as JSON to stdout instead of exporting.",
-    )
-    args = parser.parse_args(argv)
-
-    files = _expand_path(args.path)
-    if not files:
-        print(f"no rollout-*.jsonl files found at {args.path}", file=sys.stderr)
-        return 2
-
-    all_spans: list[Span] = []
-    for f in files:
-        all_spans.extend(rollout_to_spans(f))
-
-    if args.dry_run:
-        json.dump(all_spans, sys.stdout, indent=2, sort_keys=True)
-        sys.stdout.write("\n")
-        return 0
-
-    from flume.backfill.otlp import export_spans_via_otlp
-    export_spans_via_otlp(all_spans, args.endpoint, source="codex")
-    return 0
-
-
-def _expand_path(path: Path) -> list[Path]:
-    if path.is_dir():
-        # Codex stores rollouts under YYYY/MM/DD/. Walk recursively.
-        return sorted(path.rglob("rollout-*.jsonl"))
-    if path.is_file():
-        return [path]
-    return []
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(_cli())

@@ -7,15 +7,8 @@ import sys
 import time
 from pathlib import Path
 
-from flume.ingest.claude_code import (
-    ClaudeCodeTranscriptSource,
-    ingest_claude_code_transcript,
-)
-from flume.ingest.codex import (
-    DEFAULT_CODEX_ARCHIVED_ROOT,
-    CodexRolloutSource,
-    ingest_codex_rollout,
-)
+from flume.ingest.claude_code import ClaudeCodeTranscriptSource
+from flume.ingest.codex import DEFAULT_CODEX_ARCHIVED_ROOT, CodexRolloutSource
 from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
@@ -26,8 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.state_db is None:
-        suffix = ".store" if args.backend == "store" else ""
-        args.state_db = Path.cwd() / f".flume_auto_ingest{suffix}.sqlite3"
+        args.state_db = Path.cwd() / ".flume_auto_ingest.store.sqlite3"
     session_store, archive = _open_backends(args, parser)
     try:
         source, ingest = _source_and_ingest(args, parser, session_store, archive)
@@ -40,10 +32,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _open_backends(args: argparse.Namespace, parser: argparse.ArgumentParser):
-    if args.backend != "store":
-        if args.apply_retention:
-            parser.error("--apply-retention requires --backend store")
-        return None, None
     from flume.store.archive import open_archive
     from flume.store.base import open_store
 
@@ -137,17 +125,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--endpoint",
-        default="http://localhost:4318/v1/traces",
-        help="OTLP-HTTP traces endpoint for real ingest (default: %(default)s).",
-    )
-    parser.add_argument(
         "--backend",
-        choices=("otlp", "store"),
-        default="otlp",
+        choices=("store",),
+        default="store",
         help=(
-            "Ingest sink: 'otlp' exports spans to --endpoint (Langfuse path); "
-            "'store' writes full-fidelity sessions to the local session store."
+            "Ingest sink. The local session store is the only backend; "
+            "this flag is kept for service-plist compatibility."
         ),
     )
     parser.add_argument(
@@ -240,29 +223,17 @@ def _source_and_ingest(
             if args.codex_archived_root is not None
             else DEFAULT_CODEX_ARCHIVED_ROOT,
         )
-        if session_store is not None:
-            from flume.store.ingest import store_ingest_function
+        from flume.store.ingest import store_ingest_function
 
-            return source, store_ingest_function("codex", session_store, archive)
-
-        def ingest(request):
-            return ingest_codex_rollout(request, endpoint=args.endpoint)
-
-        return source, ingest
+        return source, store_ingest_function("codex", session_store, archive)
 
     if source_name == "claude-code":
         source = ClaudeCodeTranscriptSource(args.claude_root)
-        if session_store is not None:
-            from flume.store.ingest import store_ingest_function
+        from flume.store.ingest import store_ingest_function
 
-            return source, store_ingest_function(
-                "claude-code", session_store, archive
-            )
-
-        def ingest(request):
-            return ingest_claude_code_transcript(request, endpoint=args.endpoint)
-
-        return source, ingest
+        return source, store_ingest_function(
+            "claude-code", session_store, archive
+        )
 
     parser.error(
         f"unsupported --source {args.source!r}; supported: fake, codex, "

@@ -11,15 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
-
 from flume.backfill.codex import rollout_to_spans
-from flume.backfill.otlp import export_span_dicts
 
 
 def _write_jsonl(path: Path, events: list[dict]) -> None:
@@ -213,14 +205,6 @@ def test_root_span_covers_whole_rollout(tmp_path: Path) -> None:
     assert root["attributes"]["entrypoint"] == "vscode"
     assert root["attributes"]["codex.originator"] == "Codex Desktop"
     assert root["attributes"]["gen_ai.request.model"] == "gpt-5.4"
-    assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "codex"
-    assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "codex"
-    assert root["attributes"]["langfuse.trace.metadata.agent_surface"] == "vscode"
-    assert root["attributes"]["langfuse.trace.tags"] == [
-        "agent:codex",
-        "family:codex",
-        "surface:vscode",
-    ]
     assert root["input"]["user_requests"][0]["content"] == "do a thing"
     assert root["output"]["counts"] == {
         "assistant_messages": 2,
@@ -242,9 +226,6 @@ def test_turn_span_carries_usage_and_reasoning(tmp_path: Path) -> None:
 
     first = turns[0]
     a = first["attributes"]
-    assert a["langfuse.trace.metadata.agent_source"] == "codex"
-    assert a["langfuse.trace.metadata.agent_family"] == "codex"
-    assert a["langfuse.trace.metadata.agent_surface"] == "vscode"
     assert a["gen_ai.system"] == "openai"
     assert a["gen_ai.request.model"] == "gpt-5.4"
     assert a["gen_ai.usage.input_tokens"] == 100
@@ -308,58 +289,6 @@ def test_tool_spans_nest_under_correct_turn_with_exec_duration(
     assert "issue details" in mcp["output"]
 
 
-def _collect(span_dicts: list[dict]) -> list:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider(resource=Resource.create({"service.name": "t"}))
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    export_span_dicts(
-        span_dicts,
-        Resource.create({"service.name": "t", "source": "codex"}),
-        provider._active_span_processor,
-    )
-    return list(exporter.get_finished_spans())
-
-
-def test_otlp_adapter_maps_payloads_to_langfuse_input_output_attrs(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "rollout.jsonl"
-    _write_jsonl(path, _fixture_events())
-    finished = _collect(rollout_to_spans(path))
-
-    by_name = {span.name: span for span in finished}
-    root = by_name["codex.interaction"]
-    turn = next(
-        span
-        for span in finished
-        if span.name == "codex.llm_request"
-        and "langfuse.observation.input" in span.attributes
-        and "do a thing" in span.attributes["langfuse.observation.input"]
-    )
-    tool = next(span for span in finished if span.name == "codex.tool")
-
-    root_input = json.loads(root.attributes["langfuse.observation.input"])
-    root_output = json.loads(root.attributes["langfuse.observation.output"])
-    assert root.attributes["langfuse.trace.input"] == root.attributes[
-        "langfuse.observation.input"
-    ]
-    assert root.attributes["langfuse.trace.output"] == root.attributes[
-        "langfuse.observation.output"
-    ]
-    assert root_input["user_requests"][0]["content"] == "do a thing"
-    assert root_output["counts"]["tool_calls"] == 2
-
-    turn_input = json.loads(turn.attributes["langfuse.observation.input"])
-    turn_output = json.loads(turn.attributes["langfuse.observation.output"])
-    assert turn_input["messages"][0]["content"] == "do a thing"
-    assert any(item["type"] == "tool_call" for item in turn_output["messages"])
-
-    tool_input = json.loads(tool.attributes["langfuse.observation.input"])
-    tool_output = json.loads(tool.attributes["langfuse.observation.output"])
-    assert tool_input["arguments"] == {"cmd": "ls"}
-    assert "a.txt" in tool_output
-
-
 def test_root_payload_stays_summary_sized_for_large_transcripts(
     tmp_path: Path,
 ) -> None:
@@ -415,8 +344,8 @@ def test_root_payload_stays_summary_sized_for_large_transcripts(
     )
     _write_jsonl(path, rows)
 
-    [root] = [span for span in _collect(rollout_to_spans(path)) if span.name == "codex.interaction"]
-    root_output = json.loads(root.attributes["langfuse.observation.output"])
+    [root] = [span for span in rollout_to_spans(path) if span["name"] == "codex.interaction"]
+    root_output = root["output"]
 
     assert "truncated" not in root_output
     assert root_output["counts"]["assistant_messages"] == 80
@@ -425,7 +354,7 @@ def test_root_payload_stays_summary_sized_for_large_transcripts(
         "type": "truncation_notice",
         "omitted_items": 30,
     }
-    assert len(root.attributes["langfuse.observation.output"]) < 60_000
+    assert len(json.dumps(root_output)) < 60_000
 
 
 def test_exec_error_sets_error_status(tmp_path: Path) -> None:
@@ -557,8 +486,6 @@ def test_exec_end_without_function_output_still_emits_tool_span(
     assert tool["input"]["arguments"] == {"cmd": "printf hi"}
     assert tool["output"] == "hi"
     assert tool["status"] == "OK"
-    assert tool["attributes"]["langfuse.trace.metadata.agent_source"] == "codex"
-    assert "agent:codex" in tool["attributes"]["langfuse.trace.tags"]
 
 
 def test_ids_are_deterministic(tmp_path: Path) -> None:

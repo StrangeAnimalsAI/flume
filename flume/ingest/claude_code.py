@@ -2,17 +2,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from flume.backfill.claude_code import jsonl_to_spans, trace_id_for_session
-from flume.backfill.otlp import export_spans_via_otlp
-from flume.ingest.runner import IngestOutcome, IngestRequest
+from flume.backfill.claude_code import trace_id_for_session
 from flume.ingest.types import DiscoveredTranscript
-
-Span = dict[str, Any]
-ClaudeCodeExporter = Callable[[list[Span], str, str], None]
 
 DEFAULT_CLAUDE_PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
@@ -59,24 +54,6 @@ def read_transcript_metadata(path: Path, *, max_lines: int = 200) -> dict[str, A
             break
 
     return metadata
-
-
-def ingest_claude_code_transcript(
-    request: IngestRequest,
-    *,
-    endpoint: str,
-    exporter: ClaudeCodeExporter = export_spans_via_otlp,
-) -> IngestOutcome:
-    """Map one Claude Code transcript and export it through the backfill path."""
-    spans = jsonl_to_spans(request.transcript.path)
-    exporter(spans, endpoint, "claude-code")
-    root = spans[0] if spans else {}
-    attrs = root.get("attributes") if isinstance(root, dict) else {}
-    if not isinstance(attrs, dict):
-        attrs = {}
-    session_id = _string(attrs.get("session.id")) or request.transcript.session_id
-    trace_id = _string(root.get("trace_id")) or request.transcript.trace_id
-    return IngestOutcome(session_id=session_id, trace_id=trace_id)
 
 
 def _merge_event_metadata(metadata: dict[str, Any], obj: dict[str, Any]) -> None:

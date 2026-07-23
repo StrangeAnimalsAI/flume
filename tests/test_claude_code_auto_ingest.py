@@ -8,14 +8,11 @@ from pathlib import Path
 from flume.backfill.claude_code import trace_id_for_session
 from flume.ingest.claude_code import (
     ClaudeCodeTranscriptSource,
-    ingest_claude_code_transcript,
     read_transcript_metadata,
 )
 from flume.ingest.cli import main
-from flume.ingest.fingerprint import fingerprint_file
 from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
-from flume.ingest.types import DiscoveredTranscript
 
 
 NOW = 1_800_000_000.0
@@ -280,56 +277,6 @@ def test_claude_code_run_once_ingests_then_skips_unchanged(tmp_path: Path) -> No
     assert record.metadata["entrypoint"] == "cli"
 
 
-def test_ingest_claude_code_transcript_uses_existing_mapper_and_exporter(
-    tmp_path: Path,
-) -> None:
-    transcript = tmp_path / "projects" / "proj" / "session-123.jsonl"
-    _write_jsonl(transcript, _claude_events("session-123", entrypoint="claude-desktop"))
-    discovered = DiscoveredTranscript(
-        source_type="claude-code",
-        path=transcript,
-        session_id="session-123",
-        trace_id=trace_id_for_session("session-123"),
-    )
-    exports: list[tuple[list[dict], str, str]] = []
-
-    outcome = ingest_claude_code_transcript(
-        IngestRequest(
-            transcript=discovered,
-            fingerprint=fingerprint_file(transcript),
-        ),
-        endpoint="http://collector.invalid/v1/traces",
-        exporter=lambda spans, endpoint, source: exports.append(
-            (spans, endpoint, source)
-        ),
-    )
-
-    assert outcome.session_id == "session-123"
-    assert outcome.trace_id == trace_id_for_session("session-123")
-    [(spans, endpoint, source)] = exports
-    assert endpoint == "http://collector.invalid/v1/traces"
-    assert source == "claude-code"
-    assert [span["name"] for span in spans] == [
-        "claude_code.interaction",
-        "claude_code.llm_request",
-        "claude_code.tool",
-    ]
-    root = spans[0]
-    assert root["attributes"]["source"] == "claude-code"
-    assert root["attributes"]["entrypoint"] == "claude-desktop"
-    assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "claude-code"
-    assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "claude-code"
-    assert (
-        root["attributes"]["langfuse.trace.metadata.agent_surface"]
-        == "claude-desktop"
-    )
-    assert root["attributes"]["langfuse.trace.tags"] == [
-        "agent:claude-code",
-        "family:claude-code",
-        "surface:claude-desktop",
-    ]
-
-
 def test_cli_claude_code_dry_run_with_fixture_root(tmp_path: Path, capsys) -> None:
     transcript = tmp_path / "projects" / "proj" / "session-123.jsonl"
     _write_jsonl(transcript, _claude_events("session-123"))
@@ -345,6 +292,9 @@ def test_cli_claude_code_dry_run_with_fixture_root(tmp_path: Path, capsys) -> No
             str(transcript.parent),
             "--state-db",
             str(state_db),
+            "--store-url",
+            f"sqlite://{tmp_path}/store.sqlite3",
+            "--no-raw-archive",
             "--quiet-seconds",
             "5",
             "--dry-run",

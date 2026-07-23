@@ -1,4 +1,4 @@
-"""Pluggable local session store — an alternative sink to Langfuse.
+"""Pluggable local session store — the system of record for agent sessions.
 
 The backfill mappers stay the source of truth for structure and metrics;
 this package adds a storage backend that keeps FULL session fidelity

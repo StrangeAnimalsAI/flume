@@ -2,17 +2,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from flume.backfill.codex import rollout_to_spans, trace_id_for_session
-from flume.backfill.otlp import export_spans_via_otlp
-from flume.ingest.runner import IngestOutcome, IngestRequest
+from flume.backfill.codex import trace_id_for_session
 from flume.ingest.types import DiscoveredTranscript
-
-Span = dict[str, Any]
-CodexExporter = Callable[[list[Span], str, str], None]
 
 DEFAULT_CODEX_SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
 DEFAULT_CODEX_ARCHIVED_ROOT = Path.home() / ".codex" / "archived_sessions"
@@ -79,24 +74,6 @@ def read_rollout_metadata(path: Path, *, max_lines: int = 200) -> dict[str, Any]
             break
 
     return metadata
-
-
-def ingest_codex_rollout(
-    request: IngestRequest,
-    *,
-    endpoint: str,
-    exporter: CodexExporter = export_spans_via_otlp,
-) -> IngestOutcome:
-    """Map one Codex rollout and export it through the existing OTLP path."""
-    spans = rollout_to_spans(request.transcript.path)
-    exporter(spans, endpoint, "codex")
-    root = spans[0] if spans else {}
-    attrs = root.get("attributes") if isinstance(root, dict) else {}
-    if not isinstance(attrs, dict):
-        attrs = {}
-    session_id = _string(attrs.get("session.id")) or request.transcript.session_id
-    trace_id = _string(root.get("trace_id")) or request.transcript.trace_id
-    return IngestOutcome(session_id=session_id, trace_id=trace_id)
 
 
 def _merge_session_meta(metadata: dict[str, Any], payload: dict[str, Any]) -> None:

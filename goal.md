@@ -1,5 +1,12 @@
 # Goal
 
+> **Historical (v0, superseded).** This was the original goal, written when
+> Langfuse was the intended store. The v0 success condition was met, and the
+> project then replaced Langfuse with the local sqlite session store —
+> full-fidelity, no payload caps, queried via `flume analyze`. The Langfuse
+> OTLP path and its infra were removed in July 2026. Kept as a record of
+> what v0 set out to prove.
+
 One telemetry pipeline that covers every coding-agent surface on the machine, shipped to Langfuse, with enough fidelity to answer the questions the current JSONL parser (`crypto-analysis/scripts/analyze_sessions.py`) answers today — across sources, not just Claude Code.
 
 ## What this has to deliver

@@ -3,8 +3,8 @@
 Two entry points:
 
 - `store_ingest_function(source, store, archive)` returns an IngestFunction
-  for the existing auto-ingest runner, so the same discover/quiet/fingerprint
-  state machine drives either backend (OTLP→Langfuse or the local store).
+  for the existing auto-ingest runner, so the discover/quiet/fingerprint
+  state machine drives the store sink.
 - `ingest_path(store, source, path, metadata, archive)` ingests one file
   directly, used by the analyze CLI's `ingest` subcommand.
 

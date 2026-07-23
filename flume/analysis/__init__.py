@@ -1,1 +1,1 @@
-"""Analysis helpers: parity check, reproduction of the JSONL-parse numbers."""
+"""Analysis helpers: claude_transcript session metrics."""

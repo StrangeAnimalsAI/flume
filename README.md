@@ -104,11 +104,11 @@ uv build
 
 CI runs the same lint and test checks on Python 3.11, 3.12, and 3.13, then
 builds the source distribution and wheel. Tests are offline and use synthetic
-transcripts; they do not read your local agent history or require Langfuse.
+transcripts; they do not read your local agent history.
 
 ## Data
 
 Everything lives under `~/.flume/` (store, raw archive, config,
-logs) — outside this repo, and gitignored where it isn't. There is also a
-Langfuse OTLP path (`--backend otlp`) retained for comparison, but the
-store is the audit path of record.
+logs) — outside this repo, and gitignored where it isn't. The store is
+the audit path of record. (An OTLP→Langfuse export path existed for
+comparison during development and was removed in July 2026.)

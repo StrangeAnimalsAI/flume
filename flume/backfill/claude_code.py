@@ -15,8 +15,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from flume.backfill.langfuse import enrich_trace_attrs
-
 Span = dict[str, Any]
 
 # Match the 60 KB cap the native Claude Code OTel export applies with
@@ -134,14 +132,7 @@ def jsonl_to_spans(path: Path) -> list[Span]:
         "output": root_output,
         "status": "OK",
     }
-    return enrich_trace_attrs(
-        [root, *spans],
-        agent_source="claude-code",
-        agent_family="claude-code",
-        agent_surface=entrypoint
-        if isinstance(entrypoint, str) and entrypoint
-        else None,
-    )
+    return [root, *spans]
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
@@ -581,64 +572,3 @@ def _truncate_text(value: str, max_chars: int) -> str:
     return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
 
 
-def _cli(argv: list[str] | None = None) -> int:
-    """Entry point: `python -m flume.backfill.claude_code`.
-
-    `--dry-run` prints the span-dicts as JSON to stdout (one document, pretty,
-    stable key order) and does not import any OTel SDK machinery. Otherwise the
-    spans are exported via OTLP-HTTP to `--endpoint`.
-    """
-    import argparse
-    import sys
-
-    parser = argparse.ArgumentParser(
-        prog="python -m flume.backfill.claude_code",
-        description="Replay a Claude Code JSONL transcript as OTel spans.",
-    )
-    parser.add_argument(
-        "--path",
-        type=Path,
-        required=True,
-        help="Path to a .jsonl file, or a directory to glob *.jsonl from.",
-    )
-    parser.add_argument(
-        "--endpoint",
-        default="http://localhost:4318/v1/traces",
-        help="OTLP-HTTP traces endpoint (default: %(default)s).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Dump span-dicts as JSON to stdout instead of exporting.",
-    )
-    args = parser.parse_args(argv)
-
-    files = _expand_path(args.path)
-    if not files:
-        print(f"no .jsonl files found at {args.path}", file=sys.stderr)
-        return 2
-
-    all_spans: list[Span] = []
-    for f in files:
-        all_spans.extend(jsonl_to_spans(f))
-
-    if args.dry_run:
-        json.dump(all_spans, sys.stdout, indent=2, sort_keys=True)
-        sys.stdout.write("\n")
-        return 0
-
-    from flume.backfill.otlp import export_spans_via_otlp
-    export_spans_via_otlp(all_spans, args.endpoint, source="claude-code")
-    return 0
-
-
-def _expand_path(path: Path) -> list[Path]:
-    if path.is_dir():
-        return sorted(path.glob("*.jsonl"))
-    if path.is_file():
-        return [path]
-    return []
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(_cli())

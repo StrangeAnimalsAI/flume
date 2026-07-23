@@ -118,14 +118,6 @@ def test_root_span_covers_whole_session(tmp_path: Path) -> None:
     assert root["attributes"]["claude_code.version"] == "2.1.114"
     assert root["attributes"]["git.branch"] == "main"
     assert root["attributes"]["source"] == "claude-code"
-    assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "claude-code"
-    assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "claude-code"
-    assert root["attributes"]["langfuse.trace.metadata.agent_surface"] == "cli"
-    assert root["attributes"]["langfuse.trace.tags"] == [
-        "agent:claude-code",
-        "family:claude-code",
-        "surface:cli",
-    ]
     assert root["input"]["user_requests"][0]["content"] == "please inspect /tmp/a.py"
     assert root["output"]["counts"] == {
         "assistant_messages": 2,
@@ -177,8 +169,6 @@ def test_turn_span_carries_usage_and_duration(tmp_path: Path) -> None:
 
     first = turns[0]
     attrs = first["attributes"]
-    assert attrs["langfuse.trace.metadata.agent_source"] == "claude-code"
-    assert attrs["langfuse.trace.metadata.agent_family"] == "claude-code"
     assert attrs["gen_ai.usage.input_tokens"] == 100
     assert attrs["gen_ai.usage.output_tokens"] == 50
     assert attrs["gen_ai.usage.cache_read_input_tokens"] == 900

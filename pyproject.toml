@@ -9,10 +9,6 @@ description = "Local-first telemetry and analysis for Claude Code and Codex sess
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "opentelemetry-sdk>=1.28",
-    "opentelemetry-exporter-otlp-proto-http>=1.28",
-    "langfuse==4.5.1",
-    "httpx>=0.28.1,<0.29",
     "anthropic>=0.92",
     "claude-agent-sdk>=0.2",
 ]

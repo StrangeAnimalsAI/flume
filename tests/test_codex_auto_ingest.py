@@ -7,15 +7,9 @@ from pathlib import Path
 
 from flume.backfill.codex import trace_id_for_session
 from flume.ingest.cli import main
-from flume.ingest.codex import (
-    CodexRolloutSource,
-    ingest_codex_rollout,
-    read_rollout_metadata,
-)
-from flume.ingest.fingerprint import fingerprint_file
+from flume.ingest.codex import CodexRolloutSource, read_rollout_metadata
 from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
-from flume.ingest.types import DiscoveredTranscript
 
 
 NOW = 1_800_000_000.0
@@ -257,49 +251,6 @@ def test_codex_run_once_ingests_then_skips_unchanged(tmp_path: Path) -> None:
     assert record.metadata["originator"] == "Codex Desktop"
 
 
-def test_ingest_codex_rollout_uses_existing_mapper_and_exporter(tmp_path: Path) -> None:
-    rollout = tmp_path / "sessions" / "rollout.jsonl"
-    _write_jsonl(rollout, _rollout_events("session-123"))
-    discovered = DiscoveredTranscript(
-        source_type="codex",
-        path=rollout,
-        session_id="session-123",
-        trace_id=trace_id_for_session("session-123"),
-    )
-    exports: list[tuple[list[dict], str, str]] = []
-
-    outcome = ingest_codex_rollout(
-        IngestRequest(
-            transcript=discovered,
-            fingerprint=fingerprint_file(rollout),
-        ),
-        endpoint="http://collector.invalid/v1/traces",
-        exporter=lambda spans, endpoint, source: exports.append(
-            (spans, endpoint, source)
-        ),
-    )
-
-    assert outcome.session_id == "session-123"
-    assert outcome.trace_id == trace_id_for_session("session-123")
-    [(spans, endpoint, source)] = exports
-    assert endpoint == "http://collector.invalid/v1/traces"
-    assert source == "codex"
-    assert [span["name"] for span in spans] == [
-        "codex.interaction",
-        "codex.llm_request",
-        "codex.tool",
-    ]
-    root = spans[0]
-    assert root["attributes"]["langfuse.trace.metadata.agent_source"] == "codex"
-    assert root["attributes"]["langfuse.trace.metadata.agent_family"] == "codex"
-    assert root["attributes"]["langfuse.trace.metadata.agent_surface"] == "vscode"
-    assert root["attributes"]["langfuse.trace.tags"] == [
-        "agent:codex",
-        "family:codex",
-        "surface:vscode",
-    ]
-
-
 def test_cli_codex_dry_run_with_fixture_root(tmp_path: Path, capsys) -> None:
     rollout = tmp_path / "sessions" / "rollout.jsonl"
     _write_jsonl(rollout, _rollout_events("session-123"))
@@ -315,6 +266,9 @@ def test_cli_codex_dry_run_with_fixture_root(tmp_path: Path, capsys) -> None:
             str(rollout.parent),
             "--state-db",
             str(state_db),
+            "--store-url",
+            f"sqlite://{tmp_path}/store.sqlite3",
+            "--no-raw-archive",
             "--quiet-seconds",
             "5",
             "--dry-run",
