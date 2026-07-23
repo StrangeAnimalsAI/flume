@@ -15,8 +15,6 @@ _SUBAGENT = ("Agent", "Task", "spawn_agent", "wait_agent")
 _FILE = ("Read", "Glob", "Grep", "LS")
 _EDIT = ("Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch")
 
-KINDS = ("mcp", "shell", "web", "subagent", "file", "edit", "other")
-
 
 def tool_kind(name: str | None) -> str:
     if not name:

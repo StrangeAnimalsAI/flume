@@ -13,7 +13,6 @@ crashed run still leaves an ingestable prefix.
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -71,7 +70,3 @@ def ts_ns(value: str | None) -> int | None:
     except ValueError:
         return None
     return int(stamp.timestamp() * 1_000_000_000)
-
-
-def monotonic_ms() -> int:
-    return int(time.monotonic() * 1000)

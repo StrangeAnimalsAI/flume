@@ -40,10 +40,6 @@ class IngestRecord:
     attempts: int
     updated_at: str
 
-    @property
-    def path_obj(self) -> Path:
-        return Path(self.path)
-
 
 class SqliteIngestStateStore:
     """Tiny sqlite-backed checkpoint store.
