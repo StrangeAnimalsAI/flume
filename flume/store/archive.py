@@ -62,7 +62,9 @@ class RawArchive(ABC):
         is already archived."""
 
     @abstractmethod
-    def versions(self, session_id: str) -> list[ArchiveEntry]:
+    def versions(
+        self, session_id: str, *, source: str | None = None
+    ) -> list[ArchiveEntry]:
         """All archived versions of a session, oldest first."""
 
     @abstractmethod
@@ -206,11 +208,20 @@ class FsRawArchive(RawArchive):
             )
         return self._entry_by_id(cur.lastrowid)
 
-    def versions(self, session_id: str) -> list[ArchiveEntry]:
-        rows = self._conn.execute(
-            "SELECT * FROM blobs WHERE session_id=? ORDER BY captured_at_ns",
-            (session_id,),
-        ).fetchall()
+    def versions(
+        self, session_id: str, *, source: str | None = None
+    ) -> list[ArchiveEntry]:
+        if source is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM blobs WHERE session_id=? AND source=? "
+                "ORDER BY captured_at_ns",
+                (session_id, source),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM blobs WHERE session_id=? ORDER BY captured_at_ns",
+                (session_id,),
+            ).fetchall()
         return [_entry(row) for row in rows]
 
     def restore(self, entry: ArchiveEntry, dest: Path) -> Path:

@@ -90,7 +90,7 @@ class _StoreHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path.startswith("/api/"):
                 # sqlite connections are cheap and per-thread; open per request.
-                with open_store(self.store_url) as store:
+                with open_store(self.store_url, readonly=True) as store:
                     payload = _route(store, parsed.path, query)
                 if payload is None:
                     self._send_json({"error": "not found"}, status=404)
@@ -196,7 +196,13 @@ def _route(
             return store.list_findings(limit=int(_q(query, "limit") or 50))
         from flume.analysis.insights import run_insights
 
-        return run_insights(store, since_ns=_since_ns(_q(query, "since") or "7d"))
+        # A GET must not write: refreshing the page shouldn't bump
+        # finding occurrence counts (persistence happens in the CLI).
+        return run_insights(
+            store,
+            since_ns=_since_ns(_q(query, "since") or "7d"),
+            persist=False,
+        )
     if path == "/api/archive":
         from flume.store.archive import open_archive
         from flume.store.config import load_policy

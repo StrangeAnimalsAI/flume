@@ -29,8 +29,11 @@ PREMIUM_MODELS = ("claude-fable-5", "claude-mythos", "claude-opus")
 IDLE_GAP_NS = 300 * 1_000_000_000  # 5 min — prompt-cache TTL
 
 
-def run_insights(store, *, since_ns: int | None = None) -> list[Finding]:
-    """Run every detector, persist findings (deduped), return them ranked."""
+def run_insights(
+    store, *, since_ns: int | None = None, persist: bool = True
+) -> list[Finding]:
+    """Run every detector, persist findings (deduped) unless persist=False,
+    return them ranked."""
     findings: list[Finding] = []
     for detector in (
         _toolgaps,
@@ -47,7 +50,8 @@ def run_insights(store, *, since_ns: int | None = None) -> list[Finding]:
     ):
         findings.extend(detector(store, since_ns))
     findings.sort(key=lambda f: (f["severity"], -f["metric"]))
-    store.upsert_findings(findings)
+    if persist:
+        store.upsert_findings(findings)
     return findings
 
 

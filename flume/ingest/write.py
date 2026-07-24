@@ -160,7 +160,9 @@ def rebuild_stale(
                 )
                 from_original += 1
             else:
-                versions = archive.versions(session_id)
+                # Source-scoped: a claude/codex id collision must never
+                # rebuild one source's session from the other's bytes.
+                versions = archive.versions(session_id, source=row["source"])
                 if not versions:
                     missing_raw.append(session_id)
                     continue

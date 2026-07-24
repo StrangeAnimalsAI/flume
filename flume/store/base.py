@@ -262,13 +262,16 @@ class SessionStore(ABC):
 DEFAULT_STORE_URL = "sqlite://~/.flume/store.sqlite3"
 
 
-def open_store(url: str | None = None) -> SessionStore:
-    """Open a store by URL. `sqlite://<path>` is the only built-in scheme."""
+def open_store(url: str | None = None, *, readonly: bool = False) -> SessionStore:
+    """Open a store by URL. `sqlite://<path>` is the only built-in scheme.
+
+    `readonly=True` opens a pure reader: no migrations, no schema DDL, no
+    write locks. The database must already exist."""
     resolved = url or DEFAULT_STORE_URL
     if resolved.startswith("sqlite://"):
         from flume.store.sqlite import SqliteSessionStore
 
-        return SqliteSessionStore(resolved[len("sqlite://") :])
+        return SqliteSessionStore(resolved[len("sqlite://") :], readonly=readonly)
     raise ValueError(
         f"unsupported store url {resolved!r}; expected sqlite://<path>"
     )

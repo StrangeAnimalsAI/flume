@@ -151,8 +151,20 @@ END;
 
 
 class SqliteSessionStore(SessionStore):
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, readonly: bool = False) -> None:
         db_path = Path(str(path)).expanduser()
+        if readonly:
+            # A reader must be a pure reader: no migrations, no view
+            # recreation, no FTS DDL — GETs must not take write locks or
+            # mutate schema. Requires a database a writer already created.
+            self._conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            self._conn.row_factory = sqlite3.Row
+            self._fts = bool(
+                self._conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='contents_fts'"
+                ).fetchone()
+            )
+            return
         if str(db_path) != ":memory:":
             db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
@@ -260,6 +272,22 @@ class SqliteSessionStore(SessionStore):
     def ingest_session(self, bundle: SessionBundle) -> None:
         session_id = bundle.session["session_id"]
         session = dict(bundle.session)
+        # session_id is the sole primary key; until it is source-qualified,
+        # refuse to let one source silently overwrite another's session.
+        existing = self._conn.execute(
+            "SELECT source FROM sessions WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if (
+            existing
+            and existing["source"]
+            and session.get("source")
+            and existing["source"] != session["source"]
+        ):
+            raise ValueError(
+                f"session id collision: {session_id!r} already ingested from "
+                f"source {existing['source']!r}; refusing to overwrite with "
+                f"{session['source']!r}"
+            )
         session["experiment"] = self._experiment_tags(
             session.get("source"),
             session.get("project"),
