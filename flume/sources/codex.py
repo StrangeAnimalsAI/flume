@@ -131,14 +131,20 @@ def rollout_to_spans(path: Path) -> list[Span]:
     else:
         session_source = None
     model = _first_model(events)
+    # Sessions can switch models mid-rollout (each user turn snapshots its
+    # config in a turn_context). Track the current model so every turn is
+    # attributed to the model that actually served it.
+    current_model = model
 
     # First pass: collect LLM-request boundaries and tool call lifetimes.
     first_ns: int | None = None
     last_ns: int | None = None
     boundary_ns = _ts_ns(events[0].get("timestamp"))  # opening edge of first turn
     payload_boundary_ns = boundary_ns
-    turn_boundaries: list[tuple[int, int, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
-    # (start_ns, end_ns, last_token_usage, input_payload, output_payload)
+    turn_boundaries: list[
+        tuple[int, int, dict[str, Any], dict[str, Any], dict[str, Any], str | None]
+    ] = []
+    # (start_ns, end_ns, last_token_usage, input_payload, output_payload, model)
 
     pending_tools: dict[str, dict[str, Any]] = {}
     tool_spans: list[Span] = []
@@ -151,6 +157,10 @@ def rollout_to_spans(path: Path) -> list[Span]:
             if first_ns is None:
                 first_ns = ts_ns
             last_ns = ts_ns
+        if ev.get("type") == "turn_context":
+            ctx_model = (ev.get("payload") or {}).get("model")
+            if isinstance(ctx_model, str) and ctx_model:
+                current_model = ctx_model
         p = ev.get("payload") or {}
         if not isinstance(p, dict):
             continue
@@ -181,7 +191,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
                 ts_ns,
             )
             turn_boundaries.append(
-                (boundary_ns, ts_ns, last, input_payload, output_payload)
+                (boundary_ns, ts_ns, last, input_payload, output_payload, current_model)
             )
             boundary_ns = ts_ns
             payload_boundary_ns = ts_ns
@@ -277,9 +287,14 @@ def rollout_to_spans(path: Path) -> list[Span]:
 
     # Build turn spans now that boundaries are known.
     turn_spans: list[Span] = []
-    for i, (start_ns, end_ns, last, input_payload, output_payload) in enumerate(
-        turn_boundaries
-    ):
+    for i, (
+        start_ns,
+        end_ns,
+        last,
+        input_payload,
+        output_payload,
+        turn_model,
+    ) in enumerate(turn_boundaries):
         turn_spans.append(
             _turn_span(
                 i,
@@ -289,7 +304,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
                 session_id,
                 trace_id,
                 root_span_id,
-                model,
+                turn_model,
                 input_payload,
                 output_payload,
             )
@@ -320,8 +335,8 @@ def rollout_to_spans(path: Path) -> list[Span]:
             "session.id": session_id,
             "entrypoint": session_source,
             "codex.originator": originator,
-            "codex.cli_version": cli_version,
-            "codex.cwd": cwd,
+            "session.agent_version": cli_version,
+            "session.cwd": cwd,
             "gen_ai.request.model": model,
             "codex.reasoning_items": reasoning_items,
         },
@@ -423,8 +438,15 @@ def _turn_span(
     input_payload: dict[str, Any],
     output_payload: dict[str, Any],
 ) -> Span:
-    input_tokens = int(last_usage.get("input_tokens") or 0)
+    total_input = int(last_usage.get("input_tokens") or 0)
     cached = int(last_usage.get("cached_input_tokens") or 0)
+    # OpenAI usage semantics: input_tokens INCLUDES the cached subset.
+    # The store's vocabulary is exclusive (Anthropic-style): input_tokens
+    # is the non-cached portion, cache reads ride separately — so cache-hit
+    # math is uniform across sources. Verified empirically: cached never
+    # exceeds input in raw rollouts (subset), while Claude cache reads
+    # routinely exceed input (disjoint).
+    input_tokens = max(total_input - cached, 0)
     output_tokens = int(last_usage.get("output_tokens") or 0)
     reasoning_tokens = int(last_usage.get("reasoning_output_tokens") or 0)
     span = {
@@ -446,8 +468,8 @@ def _turn_span(
             # Codex-specific: reasoning tokens are OUTPUT tokens spent in
             # private chain-of-thought. Namespaced so the generic
             # `gen_ai.usage.output_tokens` retains its cross-source meaning.
-            "codex.reasoning_tokens": reasoning_tokens,
-            "codex.turn_index": index,
+            "turn.reasoning_tokens": reasoning_tokens,
+            "turn.index": index,
         },
         "status": "OK",
     }

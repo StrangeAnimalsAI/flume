@@ -70,7 +70,7 @@ def jsonl_to_spans(path: Path) -> list[Span]:
     def _apply_turn_duration(duration_ms: int) -> None:
         if duration_ms <= 0 or last_turn is None:
             return
-        last_turn["attributes"]["claude_code.duration_ms"] = duration_ms
+        last_turn["attributes"]["turn.duration_ms"] = duration_ms
         # Preserve end_unix_nano; shift start backwards by duration.
         last_turn["start_unix_nano"] = (
             last_turn["end_unix_nano"] - duration_ms * 1_000_000
@@ -142,7 +142,7 @@ def jsonl_to_spans(path: Path) -> list[Span]:
             "source": "claude-code",
             "session.id": session_id,
             "entrypoint": entrypoint,
-            "claude_code.version": version,
+            "session.agent_version": version,
             "git.branch": git_branch,
         },
         "input": root_input,
@@ -238,9 +238,9 @@ def _turn_span(
             "gen_ai.usage.output_tokens": usage.get("output_tokens") or 0,
             "gen_ai.usage.cache_read_input_tokens": usage.get("cache_read_input_tokens") or 0,
             "gen_ai.usage.cache_creation_input_tokens": usage.get("cache_creation_input_tokens") or 0,
-            "claude_code.thinking_chars": thinking_chars,
-            "claude_code.text_chars": text_chars,
-            "claude_code.duration_ms": duration_ms,
+            "turn.thinking_chars": thinking_chars,
+            "turn.text_chars": text_chars,
+            "turn.duration_ms": duration_ms,
         },
         "status": "OK",
     }
@@ -598,6 +598,20 @@ def _truncate_text(value: str, max_chars: int) -> str:
 # produces, so full text joins directly onto the metrics skeleton.
 
 
+def _settled_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mirror the bundle's retry rule: a re-logged uuid (API retry)
+    supersedes the earlier occurrence — last event wins, first-seen order —
+    so extracted content stays consistent with the deduped span rows."""
+    order: list[Any] = []
+    settled: dict[Any, dict[str, Any]] = {}
+    for index, ev in enumerate(events):
+        key = ev.get("uuid") or ("#", index)
+        if key not in settled:
+            order.append(key)
+        settled[key] = ev
+    return [settled[key] for key in order]
+
+
 def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
     rows: list[ContentRow] = []
     seq = 0
@@ -609,7 +623,7 @@ def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
         rows.append(ContentRow(span_id=span_id, kind=kind, seq=seq, text=text, ts_ns=ts))
         seq += 1
 
-    for ev in read_jsonl(path):
+    for ev in _settled_events(read_jsonl(path)):
         ts = iso_ts_ns(ev.get("timestamp"))
         t = ev.get("type")
         msg = ev.get("message")

@@ -228,11 +228,14 @@ def test_turn_span_carries_usage_and_reasoning(tmp_path: Path) -> None:
     a = first["attributes"]
     assert a["gen_ai.system"] == "openai"
     assert a["gen_ai.request.model"] == "gpt-5.4"
-    assert a["gen_ai.usage.input_tokens"] == 100
+    # Rollout usage is OpenAI-shaped (input INCLUDES the cached subset:
+    # 100 total, 80 cached). The store vocabulary is exclusive, so the
+    # mapper normalizes input to the non-cached 20.
+    assert a["gen_ai.usage.input_tokens"] == 20
     assert a["gen_ai.usage.output_tokens"] == 50
     assert a["gen_ai.usage.cache_read_input_tokens"] == 80
-    assert a["codex.reasoning_tokens"] == 30
-    assert a["codex.turn_index"] == 0
+    assert a["turn.reasoning_tokens"] == 30
+    assert a["turn.index"] == 0
     assert first["input"]["messages"][0]["content"] == "do a thing"
     assert any(
         m["type"] == "tool_call" and m["name"] == "exec_command"
@@ -244,9 +247,11 @@ def test_turn_span_carries_usage_and_reasoning(tmp_path: Path) -> None:
     )
 
     second = turns[1]
-    assert second["attributes"]["gen_ai.usage.input_tokens"] == 250
-    assert second["attributes"]["codex.reasoning_tokens"] == 5
-    assert second["attributes"]["codex.turn_index"] == 1
+    # 250 OpenAI-total input, 200 cached -> 50 exclusive.
+    assert second["attributes"]["gen_ai.usage.input_tokens"] == 50
+    assert second["attributes"]["gen_ai.usage.cache_read_input_tokens"] == 200
+    assert second["attributes"]["turn.reasoning_tokens"] == 5
+    assert second["attributes"]["turn.index"] == 1
     assert any(
         m["type"] == "tool_result" and "a.txt" in m["output"]
         for m in second["input"]["messages"]
@@ -538,3 +543,32 @@ def test_unmatched_tool_result_is_dropped(tmp_path: Path) -> None:
     spans = rollout_to_spans(path)
     # Only the interaction and the one turn — no tool span for the orphan.
     assert {s["name"] for s in spans} == {"codex.interaction", "codex.llm_request"}
+
+
+def test_mid_rollout_model_switch_attributes_each_turn(tmp_path: Path) -> None:
+    events = _fixture_events()
+    # A second turn_context switches models between the two responses; the
+    # second turn must be attributed to the model that actually served it.
+    switch = {
+        "timestamp": "2026-04-20T10:00:20.000Z",
+        "type": "turn_context",
+        "payload": {"turn_id": "turn-2", "model": "gpt-5.5", "effort": "low"},
+    }
+    insert_at = next(
+        i
+        for i, ev in enumerate(events)
+        if (ev.get("payload") or {}).get("type") == "token_count"
+        and (ev["payload"].get("info") or {}).get("last_token_usage")
+    ) + 1
+    events.insert(insert_at, switch)
+
+    path = tmp_path / "rollout.jsonl"
+    _write_jsonl(path, events)
+    turns = [
+        s for s in rollout_to_spans(path) if s["name"] == "codex.llm_request"
+    ]
+
+    assert [t["attributes"]["gen_ai.request.model"] for t in turns] == [
+        "gpt-5.4",
+        "gpt-5.5",
+    ]

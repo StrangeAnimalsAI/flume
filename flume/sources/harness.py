@@ -107,12 +107,12 @@ def harness_to_spans(path: Path) -> list[Span]:
                     usage.get("cache_read_input_tokens") or 0,
                 "gen_ai.usage.cache_creation_input_tokens":
                     usage.get("cache_creation_input_tokens") or 0,
-                "claude_code.duration_ms": duration_ms,
-                "claude_code.thinking_chars": sum(
+                "turn.duration_ms": duration_ms,
+                "turn.thinking_chars": sum(
                     len(b.get("thinking") or "")
                     for b in content if b.get("type") == "thinking"
                 ),
-                "claude_code.text_chars": sum(
+                "turn.text_chars": sum(
                     len(b.get("text") or "")
                     for b in content if b.get("type") == "text"
                 ),

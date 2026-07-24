@@ -19,7 +19,7 @@ Span = dict[str, Any]
 # Provenance stamp written to every session row. Bump whenever flume/sources/*
 # or this module change what they derive from raw bytes;
 # `flume analyze rebuild --stale` then re-ingests older rows.
-PIPELINE_VERSION = 2
+PIPELINE_VERSION = 3
 
 _ARGS_PREVIEW_MAX = 500
 
@@ -66,7 +66,7 @@ def bundle_from_spans(
     session_id = attrs.get("session.id") or file_path.stem
     started = int(root["start_unix_nano"])
     ended = int(root["end_unix_nano"])
-    cwd = meta.get("cwd") or attrs.get("codex.cwd")
+    cwd = meta.get("cwd") or attrs.get("session.cwd")
     surface = attrs.get("entrypoint") or meta.get("surface")
     is_subagent = bool(
         meta.get("is_subagent")
@@ -85,9 +85,7 @@ def bundle_from_spans(
         "parent_session_id": meta.get("parent_session_id"),
         "git_branch": attrs.get("git.branch") or meta.get("git_branch"),
         "model": _first_model(turns) or attrs.get("gen_ai.request.model"),
-        "version": attrs.get("claude_code.version")
-        or attrs.get("codex.cli_version")
-        or meta.get("version"),
+        "version": attrs.get("session.agent_version") or meta.get("version"),
         "started_at_ns": started,
         "ended_at_ns": ended,
         "wall_ms": max(0, (ended - started) // 1_000_000),
@@ -120,11 +118,11 @@ def _turn_row(span: Span) -> dict[str, Any]:
     attrs = span.get("attributes") or {}
     return {
         "span_id": span["span_id"],
-        "turn_index": attrs.get("codex.turn_index"),
+        "turn_index": attrs.get("turn.index"),
         "model": attrs.get("gen_ai.request.model"),
         "started_at_ns": int(span["start_unix_nano"]),
         "ended_at_ns": int(span["end_unix_nano"]),
-        "duration_ms": int(attrs.get("claude_code.duration_ms") or 0)
+        "duration_ms": int(attrs.get("turn.duration_ms") or 0)
         or max(0, (int(span["end_unix_nano"]) - int(span["start_unix_nano"])) // 1_000_000),
         "input_tokens": int(attrs.get("gen_ai.usage.input_tokens") or 0),
         "output_tokens": int(attrs.get("gen_ai.usage.output_tokens") or 0),
@@ -132,9 +130,9 @@ def _turn_row(span: Span) -> dict[str, Any]:
         "cache_creation_tokens": int(
             attrs.get("gen_ai.usage.cache_creation_input_tokens") or 0
         ),
-        "reasoning_tokens": int(attrs.get("codex.reasoning_tokens") or 0),
-        "thinking_chars": int(attrs.get("claude_code.thinking_chars") or 0),
-        "text_chars": int(attrs.get("claude_code.text_chars") or 0),
+        "reasoning_tokens": int(attrs.get("turn.reasoning_tokens") or 0),
+        "thinking_chars": int(attrs.get("turn.thinking_chars") or 0),
+        "text_chars": int(attrs.get("turn.text_chars") or 0),
     }
 
 

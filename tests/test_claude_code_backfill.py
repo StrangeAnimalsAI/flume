@@ -115,7 +115,7 @@ def test_root_span_covers_whole_session(tmp_path: Path) -> None:
     assert root["parent_span_id"] is None
     assert root["attributes"]["session.id"] == session_id
     assert root["attributes"]["entrypoint"] == "cli"
-    assert root["attributes"]["claude_code.version"] == "2.1.114"
+    assert root["attributes"]["session.agent_version"] == "2.1.114"
     assert root["attributes"]["git.branch"] == "main"
     assert root["attributes"]["source"] == "claude-code"
     assert root["input"]["user_requests"][0]["content"] == "please inspect /tmp/a.py"
@@ -174,9 +174,9 @@ def test_turn_span_carries_usage_and_duration(tmp_path: Path) -> None:
     assert attrs["gen_ai.usage.cache_read_input_tokens"] == 900
     assert attrs["gen_ai.usage.cache_creation_input_tokens"] == 10
     assert attrs["gen_ai.request.model"] == "claude-opus-4-7"
-    assert attrs["claude_code.thinking_chars"] == len("abcdef")
-    assert attrs["claude_code.text_chars"] == len("hello world")
-    assert attrs["claude_code.duration_ms"] == 1500
+    assert attrs["turn.thinking_chars"] == len("abcdef")
+    assert attrs["turn.text_chars"] == len("hello world")
+    assert attrs["turn.duration_ms"] == 1500
     assert first["input"]["messages"][0]["content"] == "please inspect /tmp/a.py"
     assert any(
         item["type"] == "message" and item["content"] == "hello world"
