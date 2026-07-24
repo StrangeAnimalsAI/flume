@@ -54,9 +54,12 @@ class RawArchive(ABC):
         path: Path,
         *,
         mtime_ns: int | None = None,
+        data: bytes | None = None,
     ) -> ArchiveEntry | None:
-        """Store a copy of `path`. Returns None if this exact content
-        (source, session_id, sha256) is already archived."""
+        """Store a copy of `path` (or of `data`, when the caller already
+        read the file — one snapshot for capture, hash, and parse).
+        Returns None if this exact content (source, session_id, sha256)
+        is already archived."""
 
     @abstractmethod
     def versions(self, session_id: str) -> list[ArchiveEntry]:
@@ -142,14 +145,28 @@ class FsRawArchive(RawArchive):
         path: Path,
         *,
         mtime_ns: int | None = None,
+        data: bytes | None = None,
     ) -> ArchiveEntry | None:
-        data = path.read_bytes()
+        """Capture one immutable copy. Pass `data` when the caller already
+        read the file so capture, sha, and parse share one snapshot."""
+        if data is None:
+            data = path.read_bytes()
         sha = hashlib.sha256(data).hexdigest()
         existing = self._conn.execute(
-            "SELECT id FROM blobs WHERE source=? AND session_id=? AND sha256=?",
+            "SELECT id, blob_path FROM blobs "
+            "WHERE source=? AND session_id=? AND sha256=?",
             (source, session_id, sha),
         ).fetchone()
         if existing:
+            # Manifest hit is only trustworthy if the blob is really there;
+            # an interrupted delete must not permanently block recapture.
+            blob = self.blob_root / existing["blob_path"]
+            if not blob.is_file():
+                blob.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                with open(blob, "wb") as fh:
+                    with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0) as gz:
+                        gz.write(data)
+                os.chmod(blob, 0o600)
             return None
 
         captured_ns = time.time_ns()
@@ -200,7 +217,14 @@ class FsRawArchive(RawArchive):
         blob = self.blob_root / entry.blob_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         with gzip.open(blob, "rb") as gz:
-            dest.write_bytes(gz.read())
+            data = gz.read()
+        sha = hashlib.sha256(data).hexdigest()
+        if sha != entry.sha256:
+            raise ValueError(
+                f"archive blob corrupt for {entry.session_id}: "
+                f"sha256 {sha[:12]}... != manifest {entry.sha256[:12]}..."
+            )
+        dest.write_bytes(data)
         return dest
 
     def expired(self, source: str, before_ns: int) -> list[ArchiveEntry]:

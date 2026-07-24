@@ -352,15 +352,18 @@ def rollout_to_spans(path: Path) -> list[Span]:
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
+    # Stream lines rather than materializing the whole file as one str —
+    # real rollouts reach GB scale.
     out: list[dict[str, Any]] = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    with path.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return out
 
 

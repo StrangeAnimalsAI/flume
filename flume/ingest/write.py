@@ -41,20 +41,26 @@ def ingest_path(
     """Archive + map + extract + persist one session file.
 
     Returns None if the file yields no session (still archived)."""
-    if adapter.probe is not None:
-        probed = adapter.probe(path)
-        metadata = {**probed, **(metadata or {})}
+    # One read up front: the archived bytes and the recorded raw_sha256 are
+    # guaranteed to be the same snapshot, even if the live file grows while
+    # we parse. (Mappers re-read the path; the quiet-seconds gate bounds
+    # that residual race.)
+    data = path.read_bytes()
+    raw_sha256 = hashlib.sha256(data).hexdigest()
     try:
+        if adapter.probe is not None:
+            probed = adapter.probe(path)
+            metadata = {**probed, **(metadata or {})}
         spans = adapter.map_spans(path)
     except Exception:
-        # Mapper failure must not cost us the raw data: archive under the
-        # filename stem, then re-raise so the state machine records the
-        # failure for retry once the mapper is fixed.
-        _capture(archive, adapter.name, path.stem, path)
+        # Probe/mapper failure must not cost us the raw data: archive under
+        # the filename stem, then re-raise so the state machine records the
+        # failure for retry once the parser is fixed.
+        _capture(archive, adapter.name, path.stem, path, data=data)
         raise
     root = spans[0] if spans else {}
     session_id = (root.get("attributes") or {}).get("session.id") or path.stem
-    _capture(archive, adapter.name, session_id, path)
+    _capture(archive, adapter.name, session_id, path, data=data)
 
     if not spans:
         return None
@@ -64,7 +70,7 @@ def ingest_path(
         contents=contents,
         file_path=path,
         metadata=metadata,
-        raw_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        raw_sha256=raw_sha256,
     )
     if bundle is None:
         return None
@@ -80,6 +86,8 @@ def _capture(
     source: str,
     session_id: str,
     path: Path,
+    *,
+    data: bytes | None = None,
 ) -> None:
     if archive is None:
         return
@@ -87,7 +95,7 @@ def _capture(
         mtime_ns = path.stat().st_mtime_ns
     except OSError:
         mtime_ns = None
-    archive.capture(source, session_id, path, mtime_ns=mtime_ns)
+    archive.capture(source, session_id, path, mtime_ns=mtime_ns, data=data)
 
 
 def store_ingest_function(
