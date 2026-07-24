@@ -16,8 +16,8 @@ from flume.store.base import ContentRow, SessionBundle
 
 Span = dict[str, Any]
 
-# Provenance stamp written to every session row. Bump whenever backfill/*,
-# store/extract.py, or this module change what they derive from raw bytes;
+# Provenance stamp written to every session row. Bump whenever flume/sources/*
+# or this module change what they derive from raw bytes;
 # `flume analyze rebuild --stale` then re-ingests older rows.
 PIPELINE_VERSION = 2
 

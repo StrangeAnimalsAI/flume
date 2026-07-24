@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import os
+import re
 import sqlite3
 import time
 from abc import ABC, abstractmethod
@@ -114,12 +116,22 @@ CREATE INDEX IF NOT EXISTS idx_blobs_source_captured ON blobs (source, captured_
 """
 
 
+def _fs_name(value: str) -> str:
+    """Filesystem-safe component: ids come from transcript CONTENT, which is
+    untrusted — a crafted session id must not become a path traversal."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", value)
+    safe = re.sub(r"\.{2,}", "_", safe).lstrip(".")
+    return safe or "_"
+
+
 class FsRawArchive(RawArchive):
     def __init__(self, root: str | Path) -> None:
         self.root = Path(str(root)).expanduser()
         self.blob_root = self.root / "blobs"
-        self.blob_root.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.root / "manifest.sqlite3"))
+        self.blob_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        manifest = self.root / "manifest.sqlite3"
+        self._conn = sqlite3.connect(str(manifest))
+        os.chmod(manifest, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_MANIFEST_SCHEMA)
 
@@ -144,13 +156,18 @@ class FsRawArchive(RawArchive):
         month = datetime.fromtimestamp(
             captured_ns / 1e9, tz=timezone.utc
         ).strftime("%Y-%m")
-        rel = Path(source) / month / f"{session_id}.{sha[:8]}.jsonl.gz"
+        rel = (
+            Path(_fs_name(source)) / month / f"{_fs_name(session_id)}.{sha[:8]}.jsonl.gz"
+        )
         blob = self.blob_root / rel
-        blob.parent.mkdir(parents=True, exist_ok=True)
+        if not blob.resolve().is_relative_to(self.blob_root.resolve()):
+            raise ValueError(f"blob path escapes archive root: {rel}")
+        blob.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         # mtime=0 keeps the gzip output deterministic for identical input.
         with open(blob, "wb") as fh:
             with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0) as gz:
                 gz.write(data)
+        os.chmod(blob, 0o600)
 
         with self._conn:
             cur = self._conn.execute(

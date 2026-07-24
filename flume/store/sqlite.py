@@ -8,6 +8,7 @@ by span id without updating fields (INT-455).
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -153,8 +154,12 @@ class SqliteSessionStore(SessionStore):
     def __init__(self, path: str | Path) -> None:
         db_path = Path(str(path)).expanduser()
         if str(db_path) != ":memory:":
-            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
+        if str(db_path) != ":memory:":
+            # Full-fidelity transcripts: private regardless of umask. Set
+            # before WAL/SHM exist so the sidecars inherit the mode.
+            os.chmod(db_path, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         added = self._migrate_columns()

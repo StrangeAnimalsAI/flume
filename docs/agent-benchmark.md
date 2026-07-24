@@ -22,15 +22,16 @@ so answers are mechanically scorable.
 
 ## Tasks and ground truth
 
-Verify ground truth before scoring — line numbers drift. Refresh with the
-greps shown; update this file when they move.
+Build the task set against your own repos — the shapes below are what
+matters, not the specific targets. Verify ground truth before scoring —
+line numbers drift. Refresh with a grep; update your table when they move.
 
-| Task | Repo | Ask | Ground truth (2026-07-08) |
-|---|---|---|---|
-| T1 cross-language | biz/sketchup/exploder | geometry-warning banner: HTML definition + every JS show/hide site | `panel.html:826`; `panel.js:941,945` (fns at 940/944 acceptable). Refresh: `grep -n 'geometry-warning' src/exploder/html/panel.html src/exploder/html/js/panel.js` |
-| T2 symbol lookup | biz/security/crypto-analysis | definition, signature, return shape of `admin_blast_radius_signals` | `analyzers/summary/admin_blast_radius_signals.py:69` |
-| T3 flow trace | biz/notifield | checkout-session view + product-resolving helper | `payment/views.py:32` (`create_session_view`), `:19` (`_get_product`) |
-| T4 inventory (recall test) | biz/sketchup/exploder | EVERY element id containing warning/banner/error + JS togglers | 5 elements: `geometry-warning:826`, `error-banner:832`, `error-banner-msg:834`, `notice-banner:842`, `notice-banner-msg:844`; JS at `panel.js:941-992` |
+| Task shape | Example ask | Ground truth looks like |
+|---|---|---|
+| T1 cross-language | a UI banner: HTML definition + every JS show/hide site | `panel.html:<n>`; `panel.js:<n>,<n>`. Refresh: `grep -n '<banner-id>' path/to/panel.html path/to/panel.js` |
+| T2 symbol lookup | definition, signature, and return shape of one named function | `pkg/module.py:<n>` |
+| T3 flow trace | an HTTP view plus the helper it calls to resolve its input | `views.py:<n>` (the view), `:<n>` (the helper) |
+| T4 inventory (recall test) | EVERY element id matching a pattern, plus their JS togglers | an exhaustive list — recall is the score, so ground truth must be complete |
 
 ## Scoring
 
@@ -40,9 +41,8 @@ automatically; find them via `sessions --all` under the parent session):
 - **correct** — all ground-truth refs present (T4: count elements found /5)
 - **tool calls**, **wall seconds**, **tokens** (from Agent tool usage)
 - **call precision** — classify each tool call target/map/search/offtarget
-  against ground truth (see `_docnav`-aware classifier in
-  `flume/store/navtime.py:classify_tool` plus the task's target
-  file set)
+  against ground truth (see the `_docnav`-aware classifier in
+  `flume/analysis/navtime.py` plus the task's target file set)
 
 ## Baseline (2026-07-08, haiku scouts)
 

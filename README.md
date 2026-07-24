@@ -23,7 +23,22 @@ Three layers, each independently rebuildable:
    rows (thinking, messages, untruncated tool I/O). Rebuildable from the
    raw archive via `analyze rebuild --stale` when the pipeline changes.
 3. **Declarative retention** (`~/.flume/config.toml`) — per-tier,
-   per-source TTLs (default: keep forever).
+   per-source TTLs (default: keep forever):
+
+   ```toml
+   [retention]
+   raw = "forever"
+   analyzed = "forever"
+
+   [retention.raw_overrides]
+   codex = "30d"
+   ```
+
+Source caveat the store cannot fix: recent Claude Code builds often persist
+thinking blocks as encrypted signatures, and Codex `reasoning` items are
+always encrypted — for those sessions the store has counts, not text.
+Plaintext thinking is captured whole wherever it exists (see the harness
+below for recovering it going forward).
 
 Sources are pluggable adapters (`claude-code`, `codex`, and a traced
 `harness`) — the vendor is just an argument.
@@ -39,7 +54,10 @@ The package layout mirrors the pipeline, and dependencies point one way
   archive, retention. Swappable via `open_store(url)` / `open_archive(url)`;
   it never imports the layers above.
 - `flume/analysis/` — insight detectors, experiment comparison, and the
-  `analyze` CLI, all through the `SessionStore` interface.
+  `analyze` CLI. The CLI and server use the `SessionStore` interface;
+  some detectors still query the sqlite backend directly (see the
+  package docstring), so today "pluggable store" means the read
+  surface, not yet every detector.
 - `flume/harness/` — the traced agent app; its transcript format registers
   in `sources` like any vendor.
 
@@ -86,6 +104,11 @@ change, then `rebuild --stale` re-ingests older rows from the raw archive
 — so improvements to the pipeline retroactively apply to old sessions.
 
 ### Harness (thinking capture)
+
+> **Warning:** the harness is an agent. It gives the model a Bash tool and
+> executes the commands the model chooses with your privileges, in your
+> working directory, with no sandbox or approval step. Run it only in
+> directories you'd let an agent loose in.
 
 Claude Code stopped persisting plaintext thinking (~May 2026). The harness
 requests summarized thinking and writes it into the store:

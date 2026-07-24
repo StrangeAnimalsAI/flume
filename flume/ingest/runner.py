@@ -67,9 +67,11 @@ class IngestCycleSummary:
     dry_run: bool
     discovered: int
     ingested: int
+    empty: int
     failed: int
     skipped_active: int
     skipped_unchanged: int
+    skipped_vanished: int
     would_ingest: int
     actions: list[IngestAction]
 
@@ -79,9 +81,11 @@ class IngestCycleSummary:
             "dry_run": self.dry_run,
             "discovered": self.discovered,
             "ingested": self.ingested,
+            "empty": self.empty,
             "failed": self.failed,
             "skipped_active": self.skipped_active,
             "skipped_unchanged": self.skipped_unchanged,
+            "skipped_vanished": self.skipped_vanished,
             "would_ingest": self.would_ingest,
             "actions": [action.to_dict() for action in self.actions],
         }
@@ -101,7 +105,24 @@ def run_once(
     actions: list[IngestAction] = []
 
     for transcript in source.discover():
-        fingerprint = fingerprint_file(transcript.path)
+        try:
+            fingerprint = fingerprint_file(transcript.path)
+        except OSError as exc:
+            # A file can vanish between discovery and stat (app pruned it,
+            # session dir renamed). Skip it; never abort the whole pass.
+            actions.append(
+                IngestAction(
+                    source_type=transcript.source_type,
+                    path=transcript.path,
+                    action="skip_vanished",
+                    status=IngestStatus.PENDING.value,
+                    session_id=transcript.session_id,
+                    trace_id=transcript.trace_id,
+                    metadata=dict(transcript.metadata),
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            continue
         quiet = is_quiet(
             fingerprint,
             quiet_seconds=quiet_seconds,
@@ -135,7 +156,7 @@ def run_once(
 
         if (
             record is not None
-            and record.status == IngestStatus.INGESTED
+            and record.status in (IngestStatus.INGESTED, IngestStatus.EMPTY)
             and not changed
         ):
             actions.append(
@@ -143,7 +164,7 @@ def run_once(
                     source_type=transcript.source_type,
                     path=transcript.path,
                     action="skip_unchanged",
-                    status=IngestStatus.INGESTED.value,
+                    status=record.status.value,
                     fingerprint=fingerprint.identity,
                     mtime_ns=fingerprint.mtime_ns,
                     mtime=_mtime_iso(fingerprint),
@@ -181,7 +202,7 @@ def run_once(
         ingesting = store.mark_ingesting(record, now=current)
         request = IngestRequest(transcript=transcript, fingerprint=fingerprint)
         try:
-            outcome = ingest(request) or IngestOutcome()
+            outcome = ingest(request)
         except Exception as exc:  # noqa: BLE001 - persisted for retry visibility.
             error = f"{type(exc).__name__}: {exc}"
             store.mark_failed(ingesting, now=current, error=error)
@@ -199,6 +220,28 @@ def run_once(
                     trace_id=transcript.trace_id,
                     metadata=dict(transcript.metadata),
                     reason=error,
+                )
+            )
+            continue
+
+        if outcome is None:
+            # Parsed but produced no session. Not success: mark distinctly
+            # so improved parsers can find these files and retry them.
+            updated = store.mark_empty(ingesting, now=current)
+            actions.append(
+                IngestAction(
+                    source_type=transcript.source_type,
+                    path=transcript.path,
+                    action="empty",
+                    status=IngestStatus.EMPTY.value,
+                    fingerprint=fingerprint.identity,
+                    mtime_ns=fingerprint.mtime_ns,
+                    mtime=_mtime_iso(fingerprint),
+                    size_bytes=fingerprint.size_bytes,
+                    session_id=transcript.session_id,
+                    trace_id=transcript.trace_id,
+                    metadata=dict(transcript.metadata),
+                    reason="no session derived; retried when bytes change",
                 )
             )
             continue
@@ -238,10 +281,14 @@ def _summarize(
         dry_run=dry_run,
         discovered=len(actions),
         ingested=sum(1 for action in actions if action.action == "ingested"),
+        empty=sum(1 for action in actions if action.action == "empty"),
         failed=sum(1 for action in actions if action.action == "failed"),
         skipped_active=sum(1 for action in actions if action.action == "skip_active"),
         skipped_unchanged=sum(
             1 for action in actions if action.action == "skip_unchanged"
+        ),
+        skipped_vanished=sum(
+            1 for action in actions if action.action == "skip_vanished"
         ),
         would_ingest=sum(1 for action in actions if action.action == "would_ingest"),
         actions=actions,

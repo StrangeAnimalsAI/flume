@@ -35,7 +35,7 @@ def _rollout_events(session_id: str = "codex-session-1") -> list[dict]:
             "type": "session_meta",
             "payload": {
                 "id": session_id,
-                "cwd": "/Users/james/Code/sample",
+                "cwd": "/Users/alex/Code/sample",
                 "originator": "Codex Desktop",
                 "cli_version": "0.124.0-alpha.2",
                 "source": "vscode",
@@ -47,7 +47,7 @@ def _rollout_events(session_id: str = "codex-session-1") -> list[dict]:
             "type": "turn_context",
             "payload": {
                 "turn_id": "turn-1",
-                "cwd": "/Users/james/Code/sample",
+                "cwd": "/Users/alex/Code/sample",
                 "model": "gpt-5.4",
             },
         },
@@ -93,7 +93,7 @@ def _rollout_events(session_id: str = "codex-session-1") -> list[dict]:
             "payload": {
                 "type": "exec_command_end",
                 "call_id": "call_A",
-                "aggregated_output": "/Users/james/Code/sample\n",
+                "aggregated_output": "/Users/alex/Code/sample\n",
                 "exit_code": 0,
                 "duration": {"secs": 0, "nanos": 200_000_000},
             },
@@ -104,7 +104,7 @@ def _rollout_events(session_id: str = "codex-session-1") -> list[dict]:
             "payload": {
                 "type": "function_call_output",
                 "call_id": "call_A",
-                "output": "Wall time: 0.2s\nOutput:\n/Users/james/Code/sample\n",
+                "output": "Wall time: 0.2s\nOutput:\n/Users/alex/Code/sample\n",
             },
         },
         {
@@ -150,7 +150,7 @@ def test_codex_source_extracts_metadata_and_trace_id(tmp_path: Path) -> None:
     assert item.trace_id == trace_id_for_session("session-123")
     assert item.metadata == {
         "cli_version": "0.124.0-alpha.2",
-        "cwd": "/Users/james/Code/sample",
+        "cwd": "/Users/alex/Code/sample",
         "model": "gpt-5.4",
         "model_provider": "openai",
         "originator": "Codex Desktop",

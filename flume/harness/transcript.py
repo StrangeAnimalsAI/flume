@@ -13,6 +13,7 @@ crashed run still leaves an ingestable prefix.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,8 +26,9 @@ def _now_iso() -> str:
 class TranscriptWriter:
     def __init__(self, path: Path) -> None:
         self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._fh = path.open("a")
+        os.chmod(path, 0o600)
 
     def write(self, event: dict[str, Any]) -> None:
         event.setdefault("ts", _now_iso())

@@ -99,16 +99,12 @@ def store_ingest_function(
 
     def ingest(request: IngestRequest) -> IngestOutcome | None:
         metadata = dict(request.transcript.metadata or {})
-        outcome = ingest_path(
+        # None (no session derived) propagates to the runner, which marks
+        # the file EMPTY — distinct from success, retryable when parsers
+        # improve. The raw bytes are already archived either way.
+        return ingest_path(
             store, adapter, request.transcript.path, metadata, archive=archive
         )
-        if outcome is None:
-            # Empty/unparseable transcript: report ids so state is tracked.
-            return IngestOutcome(
-                session_id=request.transcript.session_id,
-                trace_id=request.transcript.trace_id,
-            )
-        return outcome
 
     return ingest
 
@@ -139,6 +135,7 @@ def rebuild_stale(
     rebuilt: list[str] = []
     from_original = from_archive = 0
     missing_raw: list[str] = []
+    yielded_nothing: list[str] = []
     failed: list[dict[str, str]] = []
     for row in stale:
         session_id = row["session_id"]
@@ -150,7 +147,9 @@ def rebuild_stale(
             adapter = get_adapter(row["source"])
             original = Path(row["file_path"]) if row.get("file_path") else None
             if original is not None and original.is_file():
-                ingest_path(store, adapter, original, metadata, archive=archive)
+                outcome = ingest_path(
+                    store, adapter, original, metadata, archive=archive
+                )
                 from_original += 1
             else:
                 versions = archive.versions(session_id)
@@ -163,9 +162,14 @@ def rebuild_stale(
                     # source probes key off the path's stem/shape.
                     name = Path(entry.original_path).name or f"{session_id}.jsonl"
                     restored = archive.restore(entry, Path(tmp) / name)
-                    ingest_path(store, adapter, restored, metadata)
+                    outcome = ingest_path(store, adapter, restored, metadata)
                 from_archive += 1
-            rebuilt.append(session_id)
+            if outcome is None:
+                # The bytes no longer yield a session; the stale row was
+                # NOT replaced. Report it instead of counting success.
+                yielded_nothing.append(session_id)
+            else:
+                rebuilt.append(session_id)
         except Exception as exc:  # noqa: BLE001 - keep the batch going
             failed.append(
                 {"session_id": session_id, "error": f"{type(exc).__name__}: {exc}"}
@@ -177,5 +181,6 @@ def rebuild_stale(
         "from_original": from_original,
         "from_archive": from_archive,
         "missing_raw": missing_raw,
+        "yielded_nothing": yielded_nothing,
         "failed": failed,
     }

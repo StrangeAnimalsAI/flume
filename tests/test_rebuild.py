@@ -26,7 +26,7 @@ def _write_session(tmp_path: Path, session_id: str = "sess-1") -> Path:
             "uuid": "u1",
             "timestamp": "2026-04-20T10:00:00.000Z",
             "entrypoint": "cli",
-            "cwd": "/Users/james/Code/demo",
+            "cwd": "/Users/alex/Code/demo",
             "message": {"role": "user", "content": "hello"},
         },
         {
@@ -146,7 +146,7 @@ def test_rebuild_from_archive_after_vendor_pruned(tmp_path: Path) -> None:
     assert session["pipeline_version"] == PIPELINE_VERSION
     assert session["first_user_message"] == "hello"
     # Metadata replay keeps probe-derived facts the temp file can't provide.
-    assert session["cwd"] == "/Users/james/Code/demo"
+    assert session["cwd"] == "/Users/alex/Code/demo"
 
 
 def test_rebuild_reports_missing_raw(tmp_path: Path) -> None:

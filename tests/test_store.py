@@ -32,7 +32,7 @@ def _claude_events() -> list[dict]:
             "entrypoint": "cli",
             "version": "2.1.114",
             "gitBranch": "main",
-            "cwd": "/Users/james/Code/demo",
+            "cwd": "/Users/alex/Code/demo",
             "message": {"role": "user", "content": "please fix the parser bug"},
         },
         {
@@ -113,7 +113,7 @@ def _codex_events() -> list[dict]:
                 "id": "codex-sess-1",
                 "originator": "Codex Desktop",
                 "cli_version": "0.44.0",
-                "cwd": "/Users/james/Code/demo",
+                "cwd": "/Users/alex/Code/demo",
                 "source": "vscode",
             },
         },
@@ -173,7 +173,7 @@ def _ingest_claude(store, tmp_path: Path, session_id: str = "sess-claude-1"):
     path = tmp_path / f"{session_id}.jsonl"
     _write_jsonl(path, _claude_events())
     return ingest_path(
-        store, get_adapter("claude-code"), path, {"cwd": "/Users/james/Code/demo"}
+        store, get_adapter("claude-code"), path, {"cwd": "/Users/alex/Code/demo"}
     )
 
 
@@ -211,7 +211,7 @@ def test_session_rollup_metrics(tmp_path: Path) -> None:
     assert session["source"] == "claude-code"
     assert session["surface"] == "cli"
     assert session["model"] == "claude-opus-4-7"
-    assert session["cwd"] == "/Users/james/Code/demo"
+    assert session["cwd"] == "/Users/alex/Code/demo"
     assert session["turn_count"] == 2
     assert session["tool_call_count"] == 1
     assert session["input_tokens"] == 120
@@ -306,7 +306,7 @@ def test_tool_and_token_stats(tmp_path: Path) -> None:
 
 def test_session_hierarchy_and_project(tmp_path: Path) -> None:
     parent_id = "sess-parent-1"
-    root = tmp_path / "projects" / "-Users-james-Code-demo"
+    root = tmp_path / "projects" / "-Users-alex-Code-demo"
     parent_path = root / f"{parent_id}.jsonl"
     child_path = root / parent_id / "subagents" / "agent-abc123.jsonl"
     parent_path.parent.mkdir(parents=True)
@@ -315,8 +315,8 @@ def test_session_hierarchy_and_project(tmp_path: Path) -> None:
     _write_jsonl(child_path, _claude_events())
 
     with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, get_adapter("claude-code"), parent_path, {"cwd": "/Users/james/Code/demo"})
-        ingest_path(store, get_adapter("claude-code"), child_path, {"cwd": "/Users/james/Code/demo"})
+        ingest_path(store, get_adapter("claude-code"), parent_path, {"cwd": "/Users/alex/Code/demo"})
+        ingest_path(store, get_adapter("claude-code"), child_path, {"cwd": "/Users/alex/Code/demo"})
 
         top = store.list_sessions(top_level_only=True)
         assert [s["session_id"] for s in top] == [parent_id]
@@ -375,12 +375,12 @@ def test_session_commands_segmentation(tmp_path: Path) -> None:
 def test_derive_project() -> None:
     from flume.store.bundle import derive_project
 
-    assert derive_project("/Users/james/Code/tools/flume") == (
+    assert derive_project("/Users/alex/Code/tools/flume") == (
         "tools/flume"
     )
     assert derive_project(
-        "/Users/james/Code/biz/security/crypto-analysis/.claude/worktrees/x-1"
-    ) == "security/crypto-analysis"
+        "/Users/alex/Code/work/acme/billing/.claude/worktrees/x-1"
+    ) == "acme/billing"
     assert derive_project(None) is None
     # Labels must not depend on the analyzing machine's $HOME: a cwd under
     # any /Users/<name> or /home/<name> derives the same everywhere.

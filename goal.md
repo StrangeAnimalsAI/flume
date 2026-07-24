@@ -7,7 +7,7 @@
 > OTLP path and its infra were removed in July 2026. Kept as a record of
 > what v0 set out to prove.
 
-One telemetry pipeline that covers every coding-agent surface on the machine, shipped to Langfuse, with enough fidelity to answer the questions the current JSONL parser (`crypto-analysis/scripts/analyze_sessions.py`) answers today — across sources, not just Claude Code.
+One telemetry pipeline that covers every coding-agent surface on the machine, shipped to Langfuse, with enough fidelity to answer the questions the predecessor ad-hoc JSONL parser script answered — across sources, not just Claude Code.
 
 ## What this has to deliver
 
@@ -30,4 +30,4 @@ One telemetry pipeline that covers every coding-agent surface on the machine, sh
 
 ## Success condition for v0
 
-Given one Claude Code JSONL and one Codex session rollout, the backfill writes OTel spans that, when ingested into Langfuse, let a parity-check script reproduce every number in `analyze_sessions.py` for that session, with the cache/token/timing breakdown intact.
+Given one Claude Code JSONL and one Codex session rollout, the backfill writes OTel spans that, when ingested into Langfuse, let a parity-check script reproduce every number the predecessor parser produced for that session, with the cache/token/timing breakdown intact.

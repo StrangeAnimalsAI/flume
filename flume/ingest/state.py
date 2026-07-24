@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,10 @@ class IngestStatus(StrEnum):
     ACTIVE = "active"
     INGESTING = "ingesting"
     INGESTED = "ingested"
+    # Parsed cleanly but yielded no session (empty/unsupported shape).
+    # Skipped like INGESTED while the bytes are unchanged, but kept
+    # distinct so improved parsers can find and retry these files.
+    EMPTY = "empty"
     FAILED = "failed"
 
 
@@ -55,9 +60,11 @@ class SqliteIngestStateStore:
             sqlite_path = ":memory:"
         else:
             self.path = Path(path).expanduser().resolve(strict=False)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             sqlite_path = str(self.path)
         self._conn = sqlite3.connect(sqlite_path)
+        if sqlite_path != ":memory:":
+            os.chmod(sqlite_path, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
@@ -180,6 +187,9 @@ class SqliteIngestStateStore:
 
     def mark_active(self, record: IngestRecord, *, now: float, reason: str) -> IngestRecord:
         return self._update_status(record, IngestStatus.ACTIVE, now=now, error=reason)
+
+    def mark_empty(self, record: IngestRecord, *, now: float) -> IngestRecord:
+        return self._update_status(record, IngestStatus.EMPTY, now=now, error=None)
 
     def mark_ingesting(self, record: IngestRecord, *, now: float) -> IngestRecord:
         ts = _iso(now)

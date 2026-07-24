@@ -25,7 +25,7 @@ def _meta(session_id: str = "019d-session-uuid") -> dict:
         "payload": {
             "id": session_id,
             "timestamp": "2026-04-20T10:00:00.000Z",
-            "cwd": "/Users/james/Code/sample",
+            "cwd": "/Users/alex/Code/sample",
             "originator": "Codex Desktop",
             "cli_version": "0.124.0-alpha.2",
             "source": "vscode",
@@ -40,7 +40,7 @@ def _turn_context() -> dict:
         "type": "turn_context",
         "payload": {
             "turn_id": "turn-1",
-            "cwd": "/Users/james/Code/sample",
+            "cwd": "/Users/alex/Code/sample",
             "model": "gpt-5.4",
             "effort": "xhigh",
         },

@@ -218,3 +218,16 @@ def test_retention_deletes_expired_raw_blobs(tmp_path: Path) -> None:
         assert not blob.exists()
         # Analyzed tier untouched (default forever).
         assert store.get_session("sess-1") is not None
+
+
+def test_archive_capture_sanitizes_hostile_session_ids(tmp_path: Path) -> None:
+    from flume.store.archive import FsRawArchive
+
+    src = tmp_path / "t.jsonl"
+    src.write_text('{"x": 1}\n')
+    archive = FsRawArchive(tmp_path / "raw")
+    entry = archive.capture("claude-code", "../../../../tmp/escape", src)
+    assert entry is not None
+    blob = tmp_path / "raw" / "blobs" / entry.blob_path
+    assert blob.resolve().is_relative_to((tmp_path / "raw" / "blobs").resolve())
+    assert ".." not in entry.blob_path

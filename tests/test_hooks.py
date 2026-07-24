@@ -15,7 +15,7 @@ BASE_NS = 1_780_000_000 * 1_000_000_000
 SECOND_NS = 1_000_000_000
 
 DENIAL = (
-    "PreToolUse:Read hook error: [python3 /Users/james/.claude/hooks/"
+    "PreToolUse:Read hook error: [python3 /Users/alex/.claude/hooks/"
     "reread-guard.py]: reread-guard: you already read /repo/src/big.py "
     "this session and the file has not changed since — the content is in "
     "your context; use it from there."

@@ -23,7 +23,7 @@ def _bundle(session_id, started_ns, *, project="tools/demo", source="claude-code
     session = {
         "session_id": session_id,
         "source": source,
-        "cwd": f"/Users/james/Code/{project}",
+        "cwd": f"/Users/alex/Code/{project}",
         "project": project,
         "is_subagent": 0,
         "started_at_ns": started_ns,
@@ -120,7 +120,7 @@ def test_scope_filters_restrict_tagging(tmp_path):
         )
         store.ingest_session(_bundle("match", BASE_NS + 1))
         store.ingest_session(
-            _bundle("other-project", BASE_NS + 2, project="biz/sketchup")
+            _bundle("other-project", BASE_NS + 2, project="acme/site")
         )
         store.ingest_session(_bundle("other-source", BASE_NS + 3, source="codex"))
 

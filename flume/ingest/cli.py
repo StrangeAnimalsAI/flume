@@ -19,8 +19,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.state_db is None:
-        args.state_db = Path.cwd() / ".flume_auto_ingest.store.sqlite3"
-    session_store, archive = _open_backends(args, parser)
+        args.state_db = Path.home() / ".flume" / "auto-ingest-state.sqlite3"
+    # Dry runs must not create the store, archive, or their directories;
+    # the runner never invokes the ingest function under --dry-run.
+    session_store, archive = (
+        (None, None) if args.dry_run else _open_backends(args, parser)
+    )
     try:
         source, ingest = _source_and_ingest(args, parser, session_store, archive)
         return _run(args, source, ingest, session_store, archive)
@@ -57,7 +61,11 @@ def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
 
 
 def _run(args: argparse.Namespace, source, ingest, session_store, archive) -> int:
-    with SqliteIngestStateStore(args.state_db) as store:
+    state_db = args.state_db
+    if args.dry_run and not Path(state_db).exists():
+        # Nothing to read and nothing may be written: stay off disk.
+        state_db = ":memory:"
+    with SqliteIngestStateStore(state_db) as store:
         if args.loop:
             while True:
                 summary = run_once(
@@ -90,8 +98,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source",
-        default="fake",
-        help="Source adapter to use. Currently supported: fake, codex, claude-code.",
+        required=True,
+        help=(
+            "Source adapter to ingest: claude-code, codex, or a vendor "
+            "alias when unambiguous (openai). 'fake' is a test fixture "
+            "source and needs --fake-root."
+        ),
     )
     parser.add_argument(
         "--fake-root",
@@ -170,8 +182,7 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "sqlite ingest-state path (default: "
-            ".flume_auto_ingest.sqlite3 in the cwd; the store "
-            "backend appends .store so the two sinks track independently)."
+            "~/.flume/auto-ingest-state.sqlite3)."
         ),
     )
     mode = parser.add_mutually_exclusive_group()

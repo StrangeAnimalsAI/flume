@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -52,6 +53,13 @@ def main(argv: list[str] | None = None) -> int:
         (args.host, args.port), _handler_class(args.store_url)
     )
     store.close()  # probe only; handlers open per-request connections
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"WARNING: binding {args.host} exposes full session transcripts "
+            "(prompts, thinking, tool output) to the network with no "
+            "authentication. Only do this on a trusted network.",
+            file=sys.stderr,
+        )
     print(f"flume UI on http://{args.host}:{args.port}")
     try:
         server.serve_forever()
@@ -103,7 +111,9 @@ class _StoreHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Deliberately NO Access-Control-Allow-Origin: transcripts contain
+        # prompts, thinking, and tool output — no browser origin may read
+        # them cross-origin, even from localhost.
         self.end_headers()
         self.wfile.write(body)
 
