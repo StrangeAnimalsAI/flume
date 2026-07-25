@@ -45,9 +45,9 @@ def hook_events(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Hook interventions extracted from tool results, newest first."""
-    query = getattr(store, "_all", None)
-    if query is None:
-        raise TypeError("hook_events requires the sqlite backend")
+    from flume.store.base import require_sql
+
+    query = require_sql(store, "hook_events").rows
 
     conditions = ["c.kind = 'tool_result'", "c.text LIKE '%hook error:%'"]
     params: list[Any] = []
@@ -106,7 +106,7 @@ def _reread_outcome(store, row, message: str) -> str | None:
     match = _DENIED_FILE.search(message)
     if not match or row["ts_ns"] is None:
         return None
-    later = store._one(
+    later = store.row(
         """
         SELECT COUNT(*) AS n FROM tool_calls
         WHERE session_id = ? AND name = 'Read' AND is_error = 0

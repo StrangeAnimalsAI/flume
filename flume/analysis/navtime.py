@@ -11,7 +11,7 @@ Turn `duration_ms` is unreliable in recent raw files (often 0), so this
 works purely off `started_at_ns` point timestamps, which are always
 present.
 
-Requires the sqlite backend (uses store._all).
+Requires a SQL-capable store (`SqlReadable`).
 """
 from __future__ import annotations
 
@@ -70,9 +70,9 @@ def session_nav_shares(
 
     Sessions with fewer than two turns carry no measurable cycles and are
     omitted. `nav_share` is nav seconds / attributed active seconds."""
-    query = getattr(store, "_all", None)
-    if query is None:
-        raise TypeError("session_nav_shares requires the sqlite backend")
+    from flume.store.base import require_sql
+
+    query = require_sql(store, "session_nav_shares").rows
 
     conditions = ["s.is_subagent = 0"]
     params: list[Any] = []

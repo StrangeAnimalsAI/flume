@@ -63,10 +63,10 @@ The package layout mirrors the pipeline, and dependencies point one way
   archive, retention. Swappable via `open_store(url)` / `open_archive(url)`;
   it never imports the layers above.
 - `flume/analysis/` — insight detectors, experiment comparison, and the
-  `analyze` CLI. The CLI and server use the `SessionStore` interface;
-  some detectors still query the sqlite backend directly (see the
-  package docstring), so today "pluggable store" means the read
-  surface, not yet every detector.
+  `analyze` CLI. Runs on the `SessionStore` interface, plus an explicitly
+  declared `SqlReadable` capability for the detectors that need ad-hoc
+  SQL — so a non-SQL backend gets a clear error naming the feature rather
+  than a broken query.
 - `flume/harness/` — the traced agent app; its transcript format registers
   in `sources` like any vendor.
 

@@ -228,7 +228,7 @@ class SqliteSessionStore(SessionStore):
     def _backfill_hierarchy(self) -> None:
         from flume.store.bundle import derive_project
 
-        rows = self._all(
+        rows = self.rows(
             "SELECT session_id, source, surface, cwd, file_path FROM sessions"
         )
         with self._conn:
@@ -322,7 +322,7 @@ class SqliteSessionStore(SessionStore):
     def overview(self) -> dict[str, Any]:
         from flume.store.bundle import PIPELINE_VERSION
 
-        totals = self._one(
+        totals = self.row(
             """
             SELECT COUNT(*) AS sessions,
                    COALESCE(SUM(pipeline_version IS NULL
@@ -342,7 +342,7 @@ class SqliteSessionStore(SessionStore):
             """,
             (PIPELINE_VERSION,),
         )
-        by_source = self._all(
+        by_source = self.rows(
             """
             SELECT source, COUNT(*) AS sessions,
                    COALESCE(SUM(turn_count), 0) AS turns,
@@ -377,7 +377,7 @@ class SqliteSessionStore(SessionStore):
         if conditions:
             extra = " AND ".join(conditions)
             where = f"{where} AND {extra}" if where else f"WHERE {extra}"
-        return self._all(
+        return self.rows(
             f"""
             SELECT s.*, (
                 SELECT COUNT(*) FROM sessions c
@@ -390,20 +390,20 @@ class SqliteSessionStore(SessionStore):
         )
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
-        session = self._one(
+        session = self.row(
             "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
         )
         if not session or session.get("session_id") is None:
             return None
-        session["turns"] = self._all(
+        session["turns"] = self.rows(
             "SELECT * FROM turns WHERE session_id = ? ORDER BY started_at_ns",
             (session_id,),
         )
-        session["tool_calls"] = self._all(
+        session["tool_calls"] = self.rows(
             "SELECT * FROM tool_calls WHERE session_id = ? ORDER BY started_at_ns",
             (session_id,),
         )
-        session["children"] = self._all(
+        session["children"] = self.rows(
             """
             SELECT * FROM sessions WHERE parent_session_id = ?
             ORDER BY started_at_ns
@@ -425,7 +425,7 @@ class SqliteSessionStore(SessionStore):
             sql += f" AND kind IN ({', '.join('?' for _ in kinds)})"
             params.extend(kinds)
         sql += " ORDER BY seq"
-        return self._all(sql, tuple(params))
+        return self.rows(sql, tuple(params))
 
     def tool_stats(
         self,
@@ -439,7 +439,7 @@ class SqliteSessionStore(SessionStore):
         where, params = _filters(
             source=source, since_ns=since_ns, prefix="s."
         )
-        per_tool = self._all(
+        per_tool = self.rows(
             f"""
             SELECT t.name, COUNT(*) AS calls,
                    SUM(t.is_error) AS errors,
@@ -452,7 +452,7 @@ class SqliteSessionStore(SessionStore):
             """,
             params,
         )
-        repeats = self._all(
+        repeats = self.rows(
             f"""
             SELECT t.session_id, t.name, t.args_preview, COUNT(*) AS calls
             FROM tool_calls t {join} {where}
@@ -462,7 +462,7 @@ class SqliteSessionStore(SessionStore):
             """,
             params,
         )
-        slowest_rows = self._all(
+        slowest_rows = self.rows(
             f"""
             SELECT t.session_id, t.name, t.args_preview, t.duration_ms, t.is_error
             FROM tool_calls t {join} {where}
@@ -470,7 +470,7 @@ class SqliteSessionStore(SessionStore):
             """,
             (*params, slowest),
         )
-        largest_rows = self._all(
+        largest_rows = self.rows(
             f"""
             SELECT t.session_id, t.name, t.args_preview, t.result_chars
             FROM tool_calls t {join} {where}
@@ -501,7 +501,7 @@ class SqliteSessionStore(SessionStore):
         if column is None:
             raise ValueError(f"unsupported group_by {group_by!r}")
         where, params = _filters(source=source, since_ns=since_ns)
-        return self._all(
+        return self.rows(
             f"""
             SELECT {column} AS grp, COUNT(*) AS sessions,
                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -557,7 +557,7 @@ class SqliteSessionStore(SessionStore):
             params.append(source)
         sql = base + "WHERE " + " AND ".join(conditions) + " LIMIT ?"
         params.append(limit)
-        return self._all(sql, tuple(params))
+        return self.rows(sql, tuple(params))
 
     def audit_repeats(
         self,
@@ -570,7 +570,7 @@ class SqliteSessionStore(SessionStore):
         # Two-phase: group on tool_calls only (no text), then check
         # byte-identity with targeted contents lookups for the returned
         # groups. A single joined GROUP BY over result text reads GBs.
-        groups = self._all(
+        groups = self.rows(
             f"""
             SELECT t.session_id, s.source, t.name, t.args_hash,
                    MIN(t.args_preview) AS args_preview,
@@ -589,7 +589,7 @@ class SqliteSessionStore(SessionStore):
             # INDEXED BY pins both lookups: without it the planner drifts to
             # the kind/name indexes and scans every tool_result text in the
             # table — minutes instead of milliseconds on a multi-GB store.
-            row = self._one(
+            row = self.row(
                 """
                 SELECT COUNT(c.text) AS results,
                        COUNT(DISTINCT c.text) AS distinct_results
@@ -618,7 +618,7 @@ class SqliteSessionStore(SessionStore):
     ) -> list[dict[str, Any]]:
         where, params = _filters(source=source, since_ns=since_ns, prefix="s.")
         clause = "WHERE" if not where else f"{where} AND"
-        return self._all(
+        return self.rows(
             f"""
             SELECT t.session_id, s.source, t.args_preview, t.result_chars,
                    t.duration_ms, t.started_at_ns
@@ -657,7 +657,7 @@ class SqliteSessionStore(SessionStore):
         if like:
             sql += " AND c.text LIKE ?"
             params.append(like)
-        return self._all(sql, tuple(params))
+        return self.rows(sql, tuple(params))
 
     # -- experiments --------------------------------------------------------
     #
@@ -710,10 +710,10 @@ class SqliteSessionStore(SessionStore):
         return self.get_experiment(name)  # type: ignore[return-value]
 
     def get_experiment(self, name: str) -> dict[str, Any] | None:
-        return self._one("SELECT * FROM experiments WHERE name = ?", (name,))
+        return self.row("SELECT * FROM experiments WHERE name = ?", (name,))
 
     def list_experiments(self) -> list[dict[str, Any]]:
-        return self._all(
+        return self.rows(
             """
             SELECT e.*, (
                 SELECT COUNT(*) FROM sessions s
@@ -727,7 +727,7 @@ class SqliteSessionStore(SessionStore):
     def experiment_session_ids(self, name: str) -> list[str]:
         return [
             row["session_id"]
-            for row in self._all(
+            for row in self.rows(
                 """
                 SELECT session_id FROM sessions
                 WHERE is_subagent = 0
@@ -741,7 +741,7 @@ class SqliteSessionStore(SessionStore):
     def retag_experiments(self) -> int:
         """Recompute sessions.experiment for every session. Returns rows changed."""
         changed = 0
-        rows = self._all(
+        rows = self.rows(
             "SELECT session_id, source, project, started_at_ns, experiment FROM sessions"
         )
         with self._conn:
@@ -767,7 +767,7 @@ class SqliteSessionStore(SessionStore):
             return None
         matched = [
             row["name"]
-            for row in self._all(
+            for row in self.rows(
                 "SELECT name, source, project, started_at_ns, ended_at_ns "
                 "FROM experiments ORDER BY name"
             )
@@ -825,7 +825,7 @@ class SqliteSessionStore(SessionStore):
             conditions.append("last_seen_ns >= ?")
             params.append(time.time_ns() - active_within_ns)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        return self._all(
+        return self.rows(
             f"""
             SELECT * FROM findings {where}
             ORDER BY severity, metric DESC LIMIT ?
@@ -854,7 +854,7 @@ class SqliteSessionStore(SessionStore):
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        return self._all(sql, tuple(params))
+        return self.rows(sql, tuple(params))
 
     def prune_sessions(
         self,
@@ -863,7 +863,7 @@ class SqliteSessionStore(SessionStore):
         before_ns: int,
         dry_run: bool = False,
     ) -> list[str]:
-        rows = self._all(
+        rows = self.rows(
             "SELECT session_id FROM sessions WHERE source = ? AND ended_at_ns < ?",
             (source, before_ns),
         )
@@ -880,12 +880,18 @@ class SqliteSessionStore(SessionStore):
 
     # -- helpers ----------------------------------------------------------
 
-    def _all(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+    # -- SqlReadable ------------------------------------------------------
+    #
+    # Public because the analysis layer depends on them by name (see
+    # flume.store.base.SqlReadable for why analytics declare a SQL
+    # capability instead of growing SessionStore).
+
+    def rows(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
 
-    def _one(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
-        row = self._conn.execute(sql, params).fetchone()
-        return dict(row) if row is not None else None
+    def row(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
+        found = self._conn.execute(sql, params).fetchone()
+        return dict(found) if found is not None else None
 
 
 # SQLite caps a single string around 1 GB; a content row anywhere near that

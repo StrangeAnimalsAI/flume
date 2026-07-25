@@ -50,7 +50,7 @@ def compare_experiment(
         params.append(experiment["project"])
     baseline_ids = [
         row["session_id"]
-        for row in store._all(
+        for row in store.rows(
             f"SELECT s.session_id FROM sessions s WHERE {' AND '.join(conditions)}",
             tuple(params),
         )
@@ -75,7 +75,7 @@ def _group_metrics(
         return {"group": label, "sessions": 0}
     marks = ",".join("?" for _ in session_ids)
 
-    shape = store._one(
+    shape = store.row(
         f"""
         SELECT COUNT(*) AS sessions,
                SUM(input_tokens) AS input_tokens,
@@ -87,7 +87,7 @@ def _group_metrics(
     )
 
     nav_calls = nav_chars = 0
-    for row in store._all(
+    for row in store.rows(
         f"""
         SELECT t.name, t.args_preview, t.result_chars, s.source
         FROM tool_calls t JOIN sessions s USING (session_id)
@@ -102,7 +102,7 @@ def _group_metrics(
             nav_calls += 1
             nav_chars += row["result_chars"] or 0
 
-    duplicate_reads = (store._one(
+    duplicate_reads = (store.row(
         f"""
         SELECT COALESCE(SUM(n - 1), 0) AS dups FROM (
             SELECT COUNT(*) AS n FROM tool_calls
@@ -151,7 +151,7 @@ def _read_used_share(store, session_ids: list[str]) -> float | None:
     for session_id in session_ids:
         reads = set()
         edited = set()
-        for row in store._all(
+        for row in store.rows(
             """
             SELECT name, args_preview FROM tool_calls
             WHERE session_id = ?
@@ -170,7 +170,7 @@ def _read_used_share(store, session_ids: list[str]) -> float | None:
             continue
         mentions = " ".join(
             row["text"]
-            for row in store._all(
+            for row in store.rows(
                 "SELECT text FROM contents WHERE session_id = ? "
                 "AND kind = 'assistant_message'",
                 (session_id,),

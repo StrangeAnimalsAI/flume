@@ -11,7 +11,7 @@ Each detector inspects a time window and emits findings shaped as:
     metric       the number that ranks it (unit in `unit`)
     action       the concrete suggested move (build X / fix Y / habit Z)
 
-Currently requires the sqlite backend (uses raw SQL for a few detectors).
+Requires a SQL-capable store (`SqlReadable`); asserted up front.
 Severity heuristics are tuned for a single-user corpus; adjust freely.
 """
 from __future__ import annotations
@@ -57,6 +57,11 @@ def run_insights(
     in the store. Detectors are source-agnostic — the patterns they look
     for (duplicate calls, idle gaps, navigation grind) are properties of
     agentic coding, not of any one vendor."""
+    from flume.store.base import require_sql
+
+    # Declared up front: nine of eleven detectors need SQL, so failing on
+    # whichever one happens to run first would be an arbitrary error.
+    require_sql(store, "insights")
     findings: list[Finding] = []
     for detector in (
         _toolgaps,
@@ -145,7 +150,7 @@ def _schema_loops(store, since_ns, source) -> list[Finding]:
     Root cause is usually an agent() prompt asking for different keys than
     the attached schema requires — the subagent follows the prompt (INT-1282)."""
     where, params = _scope(since_ns, source)
-    rows = store._all(
+    rows = store.rows(
         f"""
         SELECT s.project, COUNT(*) errors,
                COUNT(DISTINCT t.session_id) sessions,
@@ -158,7 +163,7 @@ def _schema_loops(store, since_ns, source) -> list[Finding]:
         """, params)
     out = []
     for r in rows:
-        sample = store._one(
+        sample = store.row(
             """
             SELECT c.text FROM contents c
             JOIN tool_calls t ON t.span_id = c.span_id
@@ -184,7 +189,7 @@ def _schema_loops(store, since_ns, source) -> list[Finding]:
 
 def _error_hotspots(store, since_ns, source) -> list[Finding]:
     where, params = _scope(since_ns, source)
-    rows = store._all(
+    rows = store.rows(
         f"""
         SELECT t.name, COUNT(*) calls, SUM(t.is_error) errors
         FROM tool_calls t JOIN sessions s USING (session_id) {where}
@@ -204,7 +209,7 @@ def _error_hotspots(store, since_ns, source) -> list[Finding]:
 
 def _context_floods(store, since_ns, source) -> list[Finding]:
     where, params = _scope(since_ns, source)
-    rows = store._all(
+    rows = store.rows(
         f"""
         SELECT t.name, s.source, COUNT(*) n, SUM(t.result_chars) chars,
                MAX(t.result_chars) worst
@@ -228,7 +233,7 @@ def _context_floods(store, since_ns, source) -> list[Finding]:
 def _idle_gap_churn(store, since_ns, source) -> list[Finding]:
     """Cache rewrites after >5-min idle gaps (prompt-cache TTL expiry)."""
     where, params = _scope(since_ns, source)
-    row = store._one(
+    row = store.row(
         f"""
         SELECT COUNT(*) gaps, COALESCE(SUM(next_cc), 0) rewrite_tokens
         FROM (
@@ -258,7 +263,7 @@ def _idle_gap_churn(store, since_ns, source) -> list[Finding]:
 
 def _marathon_sessions(store, since_ns, source) -> list[Finding]:
     where, params = _scope(since_ns, source)
-    rows = store._all(
+    rows = store.rows(
         f"""
         SELECT session_id, project, turn_count, wall_ms,
                cache_read_tokens + input_tokens AS ctx_tokens
@@ -282,7 +287,7 @@ def _premium_grind(store, since_ns, source) -> list[Finding]:
     """Premium-model sessions doing high-volume mechanical tool work."""
     where, params = _scope(since_ns, source)
     premium = _premium_sql("model")
-    rows = store._all(
+    rows = store.rows(
         f"""
         SELECT session_id, project, model, tool_call_count, output_tokens
         FROM sessions s {where} {_and(where)} is_subagent = 0
@@ -326,7 +331,7 @@ def _index_ignored(store, since_ns, source) -> list[Finding]:
     it cost something to produce and is silently not paying off."""
     markers = _index_markers()
     where, params = _scope(since_ns, source)
-    sessions = store._all(
+    sessions = store.rows(
         f"""
         SELECT session_id, cwd, project, tool_call_count FROM sessions s
         {where} {_and(where)} tool_call_count > 30 AND cwd IS NOT NULL
@@ -336,7 +341,7 @@ def _index_ignored(store, since_ns, source) -> list[Finding]:
         return []
     marks = ",".join("?" for _ in indexed)
     match = " OR ".join(f'"{m}"' for m in markers)
-    used = {r["session_id"] for r in store._all(
+    used = {r["session_id"] for r in store.rows(
         f"""
         SELECT DISTINCT c.session_id FROM contents_fts
         JOIN contents c ON c.id = contents_fts.rowid
@@ -411,7 +416,7 @@ def _thinking_volume(store, since_ns, source) -> list[Finding]:
     less spend. Levers: effort level, delegation to non-premium models."""
     where, params = _scope(since_ns, source)
     premium = _premium_sql("t.model")
-    row = store._one(
+    row = store.row(
         f"""
         SELECT SUM(t.output_tokens) out_tok, SUM(t.text_chars) text_chars
         FROM turns t JOIN sessions s USING (session_id)
@@ -421,7 +426,7 @@ def _thinking_volume(store, since_ns, source) -> list[Finding]:
     if out_tok < 1_000_000:
         return []
     visible = (row.get("text_chars") or 0) / (out_tok * 4)
-    args_row = store._one(
+    args_row = store.row(
         f"""
         SELECT SUM(LENGTH(c.text)) n FROM contents c
         JOIN sessions s USING (session_id)

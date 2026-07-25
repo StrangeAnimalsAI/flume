@@ -40,7 +40,7 @@ def test_view_matches_python_and_estimates_tokens(tmp_path: Path) -> None:
     with open_store(f"sqlite://{tmp_path}/s.sqlite3") as store:
         _insert(store, "a", "mcp__linear__save_issue", 400)
         _insert(store, "b", "exec_command", 4000)
-        rows = {r["name"]: r for r in store._all(
+        rows = {r["name"]: r for r in store.rows(
             "SELECT name, kind, vendor, result_tokens_est FROM tool_calls_ext")}
     assert rows["mcp__linear__save_issue"]["kind"] == "mcp"
     assert rows["mcp__linear__save_issue"]["vendor"] == "linear"

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Any, Protocol, Self, runtime_checkable
 
 CONTENT_KINDS = (
     "thinking",
@@ -258,6 +258,48 @@ class SessionStore(ABC):
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+
+class StoreCapabilityError(TypeError):
+    """Raised when a store cannot do what a caller needs."""
+
+
+@runtime_checkable
+class SqlReadable(Protocol):
+    """A store that answers ad-hoc SQL reads.
+
+    Why this exists rather than more `SessionStore` methods: the analysis
+    layer is inherently SQL-shaped. Its detectors aggregate over the
+    session/turn/tool_call/content schema in shapes that barely repeat —
+    window functions over turn gaps, FTS joins, per-tool error rates — so
+    promoting each to an interface method would grow `SessionStore` from
+    seventeen methods to thirty-odd, nearly all with one caller. That
+    makes a second backend *harder* to write, not easier: every
+    implementer would owe bespoke aggregations they may never use.
+
+    Instead the boundary is explicit. `SessionStore` stays the portable
+    contract — ingest, fetch, search, the rollups the CLI and API need —
+    and analytics declare this narrower extra requirement by name. A
+    backend that cannot answer SQL implements `SessionStore` and skips
+    this; `require_sql` then fails with a clear message instead of an
+    AttributeError against a private helper.
+    """
+
+    def rows(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+        """All matching rows as dicts."""
+
+    def row(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
+        """The first matching row, or None."""
+
+
+def require_sql(store: object, feature: str) -> SqlReadable:
+    """Assert a store can answer SQL, naming the feature that needs it."""
+    if not isinstance(store, SqlReadable):
+        raise StoreCapabilityError(
+            f"{feature} needs a SQL-capable store (see SqlReadable); "
+            f"{type(store).__name__} does not provide one"
+        )
+    return store
 
 
 DEFAULT_STORE_URL = "sqlite://~/.flume/store.sqlite3"

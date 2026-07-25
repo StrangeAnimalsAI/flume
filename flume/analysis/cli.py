@@ -393,9 +393,9 @@ def _cmd_hooks(store, args) -> dict[str, Any]:
 
 
 def _require_sqlite(store, feature: str):
-    if getattr(store, "_all", None) is None:
-        raise SystemExit(f"{feature} requires the sqlite backend")
-    return store
+    from flume.store.base import require_sql
+
+    return require_sql(store, feature)
 
 
 def _cmd_experiment_start(store, args) -> dict[str, Any]:
@@ -456,9 +456,9 @@ def _parse_when(value: str | None) -> int | None:
 def _cmd_cost(store, args) -> list[dict[str, Any]]:
     # Cost is derived, not stored: price per-turn token splits at the turn's
     # own model rates (or --as-model rates for what-if).
-    session = getattr(store, "_all", None)
-    if session is None:
-        raise SystemExit("cost requires the sqlite backend")
+    from flume.store.base import require_sql
+
+    require_sql(store, "cost")
     since_ns = _since_ns(args.since)
     group_expr = {
         "model": "t.model",
@@ -475,7 +475,7 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         clauses.append("s.started_at_ns >= ?")
         params.append(since_ns)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = store._all(
+    rows = store.rows(
         f"""
         SELECT {group_expr} AS grp, t.model AS model, COUNT(*) turns,
             SUM(t.input_tokens) i, SUM(t.output_tokens) o,
