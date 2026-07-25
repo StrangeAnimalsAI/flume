@@ -635,6 +635,7 @@ class SqliteSessionStore(SessionStore):
         self,
         *,
         tool_names: list[str],
+        source: str | None = None,
         since_ns: int | None = None,
         like: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -647,6 +648,9 @@ class SqliteSessionStore(SessionStore):
             f"WHERE c.kind = 'tool_arguments' AND t.name IN ({marks})"
         )
         params: list[Any] = list(tool_names)
+        if source is not None:
+            sql += " AND s.source = ?"
+            params.append(source)
         if since_ns is not None:
             sql += " AND s.started_at_ns >= ?"
             params.append(since_ns)

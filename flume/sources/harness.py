@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.harness.transcript import ts_ns
+from flume.sources.common import is_nav_shell
 from flume.store.base import ContentRow
 
 Span = dict[str, Any]
@@ -226,3 +227,10 @@ def probe(path: Path) -> dict[str, Any]:
     if isinstance(meta.get("harness_version"), str):
         out["version"] = meta["harness_version"]
     return out
+
+
+def classify_tool(name: str | None, args_preview: str | None) -> str:
+    """The harness exposes a single shell tool; the command text decides."""
+    if name in ("bash", "Bash"):
+        return "navigation" if is_nav_shell(args_preview) else "bash-other"
+    return "other"

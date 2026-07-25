@@ -15,41 +15,53 @@ Requires the sqlite backend (uses store._all).
 """
 from __future__ import annotations
 
-import re
 import statistics
 from collections import defaultdict
 from typing import Any
 
 CYCLE_CAP_S = 300  # gaps past the prompt-cache TTL are user-idle, not work
 
-NAV_TOOLS = {"Read", "Grep", "Glob", "LS"}
-EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
-# Bash commands that navigate/read the tree rather than run work. Matches
-# the command word at the start of the preview or after a separator, so
-# `cargo test` does not match `cat`.
-NAV_BASH_RE = re.compile(
-    r'(?:^|[\s"(;|&]|\\n)(rg|grep|cat|sed|head|tail|find|tree|ls|wc|repo-nav)\s'
-)
+def classify_tool(
+    name: str | None, args_preview: str | None, source: str | None = None
+) -> str:
+    """Classify a tool call for time attribution.
+
+    Tool vocabularies are vendor-specific (`Read` vs `exec_command`), so the
+    source's own adapter does the classifying. Without a source — or for one
+    that declares no classifier — fall back to shell-command heuristics,
+    which are vendor independent."""
+    if source is not None:
+        classifier = _classifier_for(source)
+        if classifier is not None:
+            return classifier(name, args_preview)
+    return _fallback_classify(name, args_preview)
 
 
-def classify_tool(name: str | None, args_preview: str | None) -> str:
-    if name in NAV_TOOLS:
-        return "navigation"
-    if name == "Bash":
-        if NAV_BASH_RE.search(args_preview or ""):
-            return "navigation"
-        return "bash-other"
-    if name == "Agent":
-        return "subagent"
-    if name in EDIT_TOOLS:
-        return "editing"
-    return "other"
+def _classifier_for(source: str):
+    """Resolve (and cache) one source's tool classifier."""
+    if source not in _CLASSIFIERS:
+        try:
+            from flume.sources import get_adapter
+
+            _CLASSIFIERS[source] = get_adapter(source).classify_tool
+        except ValueError:
+            _CLASSIFIERS[source] = None
+    return _CLASSIFIERS[source]
+
+
+_CLASSIFIERS: dict[str, Any] = {}
+
+
+def _fallback_classify(name: str | None, args_preview: str | None) -> str:
+    from flume.sources.common import is_nav_shell
+
+    return "navigation" if is_nav_shell(args_preview) else "other"
 
 
 def session_nav_shares(
     store,
     *,
-    source: str | None = "claude-code",
+    source: str | None = None,
     since_ns: int | None = None,
     session_ids: list[str] | None = None,
     cap_s: int = CYCLE_CAP_S,
@@ -93,7 +105,7 @@ def session_nav_shares(
     for row in query(
         f"""
         SELECT t.session_id, t.started_at_ns, t.name, t.args_preview,
-               t.result_chars
+               t.result_chars, s.source
         FROM tool_calls t JOIN sessions s USING (session_id) {where}
         ORDER BY t.session_id, t.started_at_ns
         """,
@@ -136,7 +148,9 @@ def session_nav_shares(
                 continue
             share = seconds / len(in_cycle)
             for call in in_cycle:
-                kind = classify_tool(call["name"], call["args_preview"])
+                kind = classify_tool(
+                    call["name"], call["args_preview"], call["source"]
+                )
                 by_class[kind] += share
                 if kind == "navigation":
                     nav_calls += 1

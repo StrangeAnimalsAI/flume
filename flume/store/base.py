@@ -203,6 +203,7 @@ class SessionStore(ABC):
         self,
         *,
         tool_names: list[str],
+        source: str | None = None,
         since_ns: int | None = None,
         like: str | None = None,
     ) -> list[dict[str, Any]]:

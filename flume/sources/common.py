@@ -7,12 +7,28 @@ path enumeration) so each vendor module contains only format knowledge.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+# Shell commands that read/navigate the tree rather than do work. Vendor
+# independent — every agent's shell tool runs the same coreutils. Matches
+# the command word at a boundary (start, whitespace, quote, or separator)
+# so `cargo test` does not match `cat`, while Codex's JSON-ish preview
+# `{"cmd":"rg -n ..."}` does.
+NAV_SHELL_RE = re.compile(
+    r'(?:^|[\s"(;|&]|\\n)'
+    r"(rg|grep|cat|sed|head|tail|find|tree|ls|wc|nl|repo-nav)\s"
+)
+
+
+def is_nav_shell(args_preview: str | None) -> bool:
+    """True when a shell invocation is reading/navigating rather than working."""
+    return bool(NAV_SHELL_RE.search(args_preview or ""))
 
 
 def iter_jsonl_objects(path: Path) -> Iterable[dict[str, Any]]:

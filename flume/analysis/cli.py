@@ -138,6 +138,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--since", default="7d", help="Window like 24h, 7d, 30d.")
     p.add_argument(
+        "--source", default=None, help="Restrict to one source (default: all)."
+    )
+    p.add_argument(
         "--stored",
         action="store_true",
         help="List previously stored findings instead of re-running detectors.",
@@ -187,8 +190,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     ep.set_defaults(func=_cmd_experiment_compare)
 
-    p = sub.add_parser("cost", help="Dollar cost of Claude usage (cache-aware).")
+    p = sub.add_parser("cost", help="Dollar cost of agent usage (cache-aware).")
     p.add_argument("--since", help="Window like 24h, 7d, 30d.")
+    p.add_argument(
+        "--source", default=None, help="Restrict to one source (default: all)."
+    )
     p.add_argument(
         "--group-by", default="model", choices=("model", "day", "project", "session")
     )
@@ -368,7 +374,9 @@ def _cmd_insights(store, args) -> list[dict[str, Any]]:
         return store.list_findings(limit=args.limit)
     from flume.analysis.insights import run_insights
 
-    return run_insights(store, since_ns=_since_ns(args.since))[: args.limit]
+    return run_insights(
+        store, since_ns=_since_ns(args.since), source=args.source
+    )[: args.limit]
 
 
 def _cmd_hooks(store, args) -> dict[str, Any]:
@@ -481,11 +489,15 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         "project": "s.project",
         "session": "t.session_id",
     }[args.group_by]
-    where = "WHERE s.source = 'claude-code'"
+    clauses: list[str] = []
     params: list[Any] = []
+    if getattr(args, "source", None):
+        clauses.append("s.source = ?")
+        params.append(args.source)
     if since_ns is not None:
-        where += " AND s.started_at_ns >= ?"
+        clauses.append("s.started_at_ns >= ?")
         params.append(since_ns)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = store._all(
         f"""
         SELECT {group_expr} AS grp, t.model AS model, COUNT(*) turns,

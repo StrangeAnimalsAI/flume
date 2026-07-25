@@ -26,6 +26,7 @@ _OPS = re.compile(
 def script_clusters(
     store: SessionStore,
     *,
+    source: str | None = None,
     since_ns: int | None = None,
     min_sessions: int = 3,
     limit: int = 30,
@@ -36,7 +37,7 @@ def script_clusters(
     # Single pass: one indexed fetch, marker filtering in Python (cheaper
     # than N LIKE table scans over multi-GB of argument text).
     for row in store.tool_argument_rows(
-        tool_names=_SHELL_TOOLS, since_ns=since_ns
+        tool_names=_SHELL_TOOLS, source=source, since_ns=since_ns
     ):
         text = row["text"]
         if not any(marker in text for marker in _SCRIPT_MARKERS):

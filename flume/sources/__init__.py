@@ -19,6 +19,11 @@ identity metadata:
        ids `map_spans` produces so text joins onto the metrics skeleton.
     3. `probe(path) -> dict` (optional) reads at most a few lines for
        cheap hints: hierarchy (parent_session_id, is_subagent), cwd.
+    4. `classify_tool(name, args_preview) -> str` (optional) labels one
+       tool call `navigation` / `editing` / `subagent` / `bash-other` /
+       `other`. Only the source knows its own tool vocabulary — Claude
+       Code's `Read` and Codex's `exec_command` mean different things —
+       and time attribution is wrong without it.
 
 `TranscriptSource` — where transcripts live. Pull-based sources
 (claude-code, codex) implement `discover()`; push-based sources (the
@@ -58,6 +63,7 @@ class SourceAdapter:
     map_spans: Callable[[Path], list[Span]]
     extract_contents: Callable[[Path, str], list[ContentRow]]
     probe: Callable[[Path], dict[str, Any]] | None = None
+    classify_tool: Callable[[str | None, str | None], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +126,7 @@ register(
         map_spans=_claude_code.jsonl_to_spans,
         extract_contents=_claude_code.extract_contents,
         probe=_claude_code.probe,
+        classify_tool=_claude_code.classify_tool,
     )
 )
 register(
@@ -129,6 +136,7 @@ register(
         map_spans=_codex.rollout_to_spans,
         extract_contents=_codex.extract_contents,
         probe=_codex.probe,
+        classify_tool=_codex.classify_tool,
     )
 )
 register(
@@ -138,5 +146,6 @@ register(
         map_spans=_harness.harness_to_spans,
         extract_contents=_harness.extract_contents,
         probe=_harness.probe,
+        classify_tool=_harness.classify_tool,
     )
 )

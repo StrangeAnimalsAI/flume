@@ -22,6 +22,7 @@ from typing import Any
 from flume.sources import DiscoveredTranscript
 from flume.sources.common import (
     as_string,
+    is_nav_shell,
     iso_ts_ns,
     iter_jsonl_objects,
     json_text,
@@ -809,3 +810,25 @@ def _has_enough_metadata(metadata: dict[str, Any]) -> bool:
     )
 
 
+
+
+# ---------------------------------------------------------------------------
+# Tool vocabulary (for navigation-time attribution)
+
+_NAV_TOOLS = {"Read", "Grep", "Glob", "LS"}
+_EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+_SHELL_TOOLS = {"Bash", "BashOutput"}
+_SUBAGENT_TOOLS = {"Agent", "Task"}
+
+
+def classify_tool(name: str | None, args_preview: str | None) -> str:
+    """Classify one tool call as navigation / editing / subagent / other."""
+    if name in _NAV_TOOLS:
+        return "navigation"
+    if name in _SHELL_TOOLS:
+        return "navigation" if is_nav_shell(args_preview) else "bash-other"
+    if name in _SUBAGENT_TOOLS:
+        return "subagent"
+    if name in _EDIT_TOOLS:
+        return "editing"
+    return "other"

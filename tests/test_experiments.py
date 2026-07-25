@@ -166,15 +166,36 @@ def test_list_experiments_counts_sessions(tmp_path):
 # -- nav-time attribution -----------------------------------------------------
 
 
-def test_classify_tool_shapes():
-    assert classify_tool("Read", None) == "navigation"
-    assert classify_tool("Bash", '{"command": "rg -n pattern src"}') == "navigation"
-    assert classify_tool("Bash", '{"command": "repo-nav search foo"}') == "navigation"
-    assert classify_tool("Bash", '{"command": "cargo test"}') == "bash-other"
+def test_classify_tool_shapes_claude_code():
+    cc = "claude-code"
+    assert classify_tool("Read", None, cc) == "navigation"
+    assert classify_tool("Bash", '{"command": "rg -n pattern src"}', cc) == "navigation"
+    assert classify_tool("Bash", '{"command": "repo-nav search foo"}', cc) == "navigation"
+    assert classify_tool("Bash", '{"command": "cargo test"}', cc) == "bash-other"
     # 'cat' must match as a command word, not inside 'cargo'/'concatenate'
-    assert classify_tool("Bash", '{"command": "cat foo.py"}') == "navigation"
-    assert classify_tool("Edit", None) == "editing"
-    assert classify_tool("Agent", None) == "subagent"
+    assert classify_tool("Bash", '{"command": "cat foo.py"}', cc) == "navigation"
+    assert classify_tool("Edit", None, cc) == "editing"
+    assert classify_tool("Agent", None, cc) == "subagent"
+
+
+def test_classify_tool_shapes_codex():
+    """Codex works through the shell, so the command text decides — the
+    Claude tool names mean nothing here and vice versa."""
+    cx = "codex"
+    assert classify_tool("exec_command", '{"cmd":"rg -n foo src"}', cx) == "navigation"
+    assert classify_tool("exec_command", '{"cmd":"cat a.py"}', cx) == "navigation"
+    assert classify_tool("exec_command", '{"cmd":"forge test -vv"}', cx) == "bash-other"
+    assert classify_tool("apply_patch", None, cx) == "editing"
+    assert classify_tool("wait_agent", None, cx) == "subagent"
+    # Claude's vocabulary must not leak across sources.
+    assert classify_tool("Read", None, cx) == "other"
+
+
+def test_classify_tool_unknown_source_falls_back_to_shell_heuristics():
+    # No source: tool names are ambiguous, but shell text is universal.
+    assert classify_tool("Read", None) == "other"
+    assert classify_tool("anything", '{"cmd":"grep -n x y"}') == "navigation"
+    assert classify_tool("anything", '{"cmd":"make build"}') == "other"
 
 
 def test_nav_share_splits_cycles_and_skips_idle(tmp_path):

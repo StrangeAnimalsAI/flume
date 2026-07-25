@@ -89,12 +89,16 @@ def _group_metrics(
     nav_calls = nav_chars = 0
     for row in store._all(
         f"""
-        SELECT name, args_preview, result_chars
-        FROM tool_calls WHERE session_id IN ({marks})
+        SELECT t.name, t.args_preview, t.result_chars, s.source
+        FROM tool_calls t JOIN sessions s USING (session_id)
+        WHERE t.session_id IN ({marks})
         """,
         tuple(session_ids),
     ):
-        if classify_tool(row["name"], row["args_preview"]) == "navigation":
+        if (
+            classify_tool(row["name"], row["args_preview"], row["source"])
+            == "navigation"
+        ):
             nav_calls += 1
             nav_chars += row["result_chars"] or 0
 

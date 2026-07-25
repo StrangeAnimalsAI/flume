@@ -30,10 +30,19 @@ IDLE_GAP_NS = 300 * 1_000_000_000  # 5 min — prompt-cache TTL
 
 
 def run_insights(
-    store, *, since_ns: int | None = None, persist: bool = True
+    store,
+    *,
+    since_ns: int | None = None,
+    source: str | None = None,
+    persist: bool = True,
 ) -> list[Finding]:
     """Run every detector, persist findings (deduped) unless persist=False,
-    return them ranked."""
+    return them ranked.
+
+    `source` restricts the scan to one source name; None means every source
+    in the store. Detectors are source-agnostic — the patterns they look
+    for (duplicate calls, idle gaps, navigation grind) are properties of
+    agentic coding, not of any one vendor."""
     findings: list[Finding] = []
     for detector in (
         _toolgaps,
@@ -48,7 +57,7 @@ def run_insights(
         _nav_share,
         _thinking_volume,
     ):
-        findings.extend(detector(store, since_ns))
+        findings.extend(detector(store, since_ns, source))
     findings.sort(key=lambda f: (f["severity"], -f["metric"]))
     if persist:
         store.upsert_findings(findings)
@@ -68,10 +77,10 @@ def _finding(kind, fingerprint, severity, title, detail, metric, unit, action,
 # -- detectors ---------------------------------------------------------------
 
 
-def _toolgaps(store, since_ns) -> list[Finding]:
+def _toolgaps(store, since_ns, source) -> list[Finding]:
     """Throwaway scripts rewritten across many sessions -> durable tools."""
     out = []
-    for cluster in script_clusters(store, since_ns=since_ns, min_sessions=5)[:5]:
+    for cluster in script_clusters(store, source=source, since_ns=since_ns, min_sessions=5)[:5]:
         n = cluster["sessions"]
         out.append(_finding(
             "toolgap", f"{cluster['imports']}|{cluster['operations']}",
@@ -87,11 +96,11 @@ def _toolgaps(store, since_ns) -> list[Finding]:
     return out
 
 
-def _repeat_waste(store, since_ns) -> list[Finding]:
+def _repeat_waste(store, since_ns, source) -> list[Finding]:
     """Byte-identical duplicate calls: provably zero-information re-work."""
     out = []
     by_tool: dict[str, dict[str, Any]] = {}
-    for row in store.audit_repeats(since_ns=since_ns, limit=200):
+    for row in store.audit_repeats(source=source, since_ns=since_ns, limit=200):
         if not row.get("byte_identical"):
             continue
         slot = by_tool.setdefault(row["name"], {"calls": 0, "ms": 0, "groups": 0})
@@ -114,21 +123,21 @@ def _repeat_waste(store, since_ns) -> list[Finding]:
     return out
 
 
-def _schema_loops(store, since_ns) -> list[Finding]:
+def _schema_loops(store, since_ns, source) -> list[Finding]:
     """Subagents grinding against a StructuredOutput schema they never satisfy.
 
     Distinct from repeat_waste: each retry rephrases the payload (not
     byte-identical), so only the validation-error count exposes the loop.
     Root cause is usually an agent() prompt asking for different keys than
     the attached schema requires — the subagent follows the prompt (INT-1282)."""
-    where, params = _since(since_ns)
+    where, params = _scope(since_ns, source)
     rows = store._all(
         f"""
         SELECT s.project, COUNT(*) errors,
                COUNT(DISTINCT t.session_id) sessions,
                MAX(t.session_id) example_session
         FROM tool_calls t JOIN sessions s USING (session_id)
-        {where} {"AND" if where else "WHERE"} t.name = 'StructuredOutput'
+        {where} {_and(where)} t.name = 'StructuredOutput'
             AND t.is_error = 1
         GROUP BY s.project HAVING errors >= 10
         ORDER BY errors DESC LIMIT 5
@@ -159,8 +168,8 @@ def _schema_loops(store, since_ns) -> list[Finding]:
     return out
 
 
-def _error_hotspots(store, since_ns) -> list[Finding]:
-    where, params = _since(since_ns)
+def _error_hotspots(store, since_ns, source) -> list[Finding]:
+    where, params = _scope(since_ns, source)
     rows = store._all(
         f"""
         SELECT t.name, COUNT(*) calls, SUM(t.is_error) errors
@@ -179,14 +188,14 @@ def _error_hotspots(store, since_ns) -> list[Finding]:
     ) for r in rows]
 
 
-def _context_floods(store, since_ns) -> list[Finding]:
-    where, params = _since(since_ns)
+def _context_floods(store, since_ns, source) -> list[Finding]:
+    where, params = _scope(since_ns, source)
     rows = store._all(
         f"""
         SELECT t.name, s.source, COUNT(*) n, SUM(t.result_chars) chars,
                MAX(t.result_chars) worst
         FROM tool_calls t JOIN sessions s USING (session_id)
-        {where} {"AND" if where else "WHERE"} t.result_chars > 200000
+        {where} {_and(where)} t.result_chars > 200000
         GROUP BY t.name, s.source ORDER BY chars DESC LIMIT 5
         """, params)
     return [_finding(
@@ -202,9 +211,9 @@ def _context_floods(store, since_ns) -> list[Finding]:
     ) for r in rows]
 
 
-def _idle_gap_churn(store, since_ns) -> list[Finding]:
+def _idle_gap_churn(store, since_ns, source) -> list[Finding]:
     """Cache rewrites after >5-min idle gaps (prompt-cache TTL expiry)."""
-    where, params = _since(since_ns)
+    where, params = _scope(since_ns, source)
     row = store._one(
         f"""
         SELECT COUNT(*) gaps, COALESCE(SUM(next_cc), 0) rewrite_tokens
@@ -214,14 +223,14 @@ def _idle_gap_churn(store, since_ns) -> list[Finding]:
                        PARTITION BY t.session_id ORDER BY t.started_at_ns
                    ) AS gap
             FROM turns t JOIN sessions s USING (session_id)
-            {where} {"AND" if where else "WHERE"} s.source = 'claude-code'
+            {where}
         ) WHERE gap > {IDLE_GAP_NS}
         """, params) or {}
     tokens = row.get("rewrite_tokens") or 0
     if tokens < 5_000_000:
         return []
     return [_finding(
-        "idle_gap_churn", "claude-code",
+        "idle_gap_churn", _fp(source),
         2 if tokens < 50_000_000 else 1,
         f"{row['gaps']} idle gaps >5min mid-session forced "
         f"{tokens / 1e6:.0f}M tokens of cache rewrites",
@@ -233,13 +242,13 @@ def _idle_gap_churn(store, since_ns) -> list[Finding]:
     )]
 
 
-def _marathon_sessions(store, since_ns) -> list[Finding]:
-    where, params = _since(since_ns)
+def _marathon_sessions(store, since_ns, source) -> list[Finding]:
+    where, params = _scope(since_ns, source)
     rows = store._all(
         f"""
         SELECT session_id, project, turn_count, wall_ms,
                cache_read_tokens + input_tokens AS ctx_tokens
-        FROM sessions s {where} {"AND" if where else "WHERE"} is_subagent = 0
+        FROM sessions s {where} {_and(where)} is_subagent = 0
             AND turn_count > 200
         ORDER BY cache_read_tokens DESC LIMIT 3
         """, params)
@@ -255,14 +264,14 @@ def _marathon_sessions(store, since_ns) -> list[Finding]:
     ) for r in rows]
 
 
-def _premium_grind(store, since_ns) -> list[Finding]:
+def _premium_grind(store, since_ns, source) -> list[Finding]:
     """Premium-model sessions doing high-volume mechanical tool work."""
-    where, params = _since(since_ns)
+    where, params = _scope(since_ns, source)
     premium = " OR ".join(f"model LIKE '{m}%'" for m in PREMIUM_MODELS)
     rows = store._all(
         f"""
         SELECT session_id, project, model, tool_call_count, output_tokens
-        FROM sessions s {where} {"AND" if where else "WHERE"} is_subagent = 0
+        FROM sessions s {where} {_and(where)} is_subagent = 0
             AND ({premium}) AND tool_call_count > 150
         ORDER BY tool_call_count DESC LIMIT 3
         """, params)
@@ -279,14 +288,13 @@ def _premium_grind(store, since_ns) -> list[Finding]:
     ) for r in rows]
 
 
-def _docnav_ignored(store, since_ns) -> list[Finding]:
+def _docnav_ignored(store, since_ns, source) -> list[Finding]:
     """Sessions grinding navigation in repos that HAVE a _docnav index."""
-    where, params = _since(since_ns)
+    where, params = _scope(since_ns, source)
     sessions = store._all(
         f"""
         SELECT session_id, cwd, project, tool_call_count FROM sessions s
-        {where} {"AND" if where else "WHERE"} source = 'claude-code'
-            AND tool_call_count > 30 AND cwd IS NOT NULL
+        {where} {_and(where)} tool_call_count > 30 AND cwd IS NOT NULL
         """, params)
     indexed = [s for s in sessions if (Path(s["cwd"]) / "_docnav").is_dir()]
     if not indexed:
@@ -304,7 +312,7 @@ def _docnav_ignored(store, since_ns) -> list[Finding]:
         return []
     projects = sorted({s["project"] or "?" for s in ignored})
     return [_finding(
-        "docnav_ignored", "claude-code", 3,
+        "docnav_ignored", _fp(source), 3,
         f"{len(ignored)} of {len(indexed)} heavy sessions in indexed repos "
         "never consulted _docnav",
         f"Projects: {', '.join(projects[:5])}. The index exists but the "
@@ -316,14 +324,14 @@ def _docnav_ignored(store, since_ns) -> list[Finding]:
     )]
 
 
-def _nav_share(store, since_ns) -> list[Finding]:
+def _nav_share(store, since_ns, source) -> list[Finding]:
     """Share of active session time spent navigating code (cycle attribution).
 
     Measured 2026-07-08: ~33% median across May-July sessions — the single
     largest tool class, on par with pure generation. The fingerprint is
     fixed so re-runs update one row and the trend stays visible; experiment
     windows (analyze experiment compare) give the controlled before/after."""
-    rows = session_nav_shares(store, since_ns=since_ns)
+    rows = session_nav_shares(store, source=source, since_ns=since_ns)
     summary = nav_summary(rows)
     if summary["sessions"] < 5:
         return []
@@ -336,7 +344,7 @@ def _nav_share(store, since_ns) -> list[Finding]:
         for r in worst
     )
     return [_finding(
-        "nav_share", "claude-code",
+        "nav_share", _fp(source),
         2 if median >= 0.30 else 3,
         f"Navigation eats {median:.0%} of active time (median of "
         f"{summary['sessions']} sessions; {summary['nav_hours']}h of "
@@ -352,7 +360,7 @@ def _nav_share(store, since_ns) -> list[Finding]:
     )]
 
 
-def _thinking_volume(store, since_ns) -> list[Finding]:
+def _thinking_volume(store, since_ns, source) -> list[Finding]:
     """Premium output that is invisible reasoning, not deliverable.
 
     Measured 2026-07-09 (30d): ~91% of 63 MTok premium output was thinking
@@ -360,14 +368,13 @@ def _thinking_volume(store, since_ns) -> list[Finding]:
     throughput (~230 tok/s, waiting negligible), so the 38% generation
     share of wall time is volume-driven: less thinking = less waiting AND
     less spend. Levers: effort level, delegation to non-premium models."""
-    where, params = _since(since_ns)
+    where, params = _scope(since_ns, source)
     premium = " OR ".join(f"t.model LIKE '{m}%'" for m in PREMIUM_MODELS)
     row = store._one(
         f"""
         SELECT SUM(t.output_tokens) out_tok, SUM(t.text_chars) text_chars
         FROM turns t JOIN sessions s USING (session_id)
-        {where} {"AND" if where else "WHERE"} s.source = 'claude-code'
-            AND s.is_subagent = 0 AND ({premium})
+        {where} {_and(where)} s.is_subagent = 0 AND ({premium})
         """, params) or {}
     out_tok = row.get("out_tok") or 0
     if out_tok < 1_000_000:
@@ -377,15 +384,14 @@ def _thinking_volume(store, since_ns) -> list[Finding]:
         f"""
         SELECT SUM(LENGTH(c.text)) n FROM contents c
         JOIN sessions s USING (session_id)
-        {where} {"AND" if where else "WHERE"} s.source = 'claude-code'
-            AND s.is_subagent = 0 AND c.kind = 'tool_arguments'
+        {where} {_and(where)} s.is_subagent = 0 AND c.kind = 'tool_arguments'
         """, params) or {}
     args_share = (args_row.get("n") or 0) / (out_tok * 4)
     invisible = max(0.0, 1 - visible - args_share)
     if invisible < 0.75:
         return []
     return [_finding(
-        "thinking_volume", "claude-code",
+        "thinking_volume", _fp(source),
         2 if invisible >= 0.85 else 3,
         f"{invisible:.0%} of {out_tok / 1e6:.0f} MTok premium output is "
         "invisible thinking",
@@ -399,7 +405,29 @@ def _thinking_volume(store, since_ns) -> list[Finding]:
     )]
 
 
-def _since(since_ns) -> tuple[str, tuple]:
-    if since_ns is None:
+def _scope(since_ns, source=None) -> tuple[str, tuple]:
+    """Shared detector scope: time window plus optional source restriction.
+
+    Returns a complete WHERE clause (or "") and its params. Detectors that
+    need further conditions append them with `_and(where)`."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if since_ns is not None:
+        clauses.append("s.started_at_ns >= ?")
+        params.append(since_ns)
+    if source is not None:
+        clauses.append("s.source = ?")
+        params.append(source)
+    if not clauses:
         return "", ()
-    return "WHERE s.started_at_ns >= ?", (since_ns,)
+    return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _fp(source: str | None) -> str:
+    """Fingerprint for corpus-wide findings: scope-stable, vendor-neutral."""
+    return source or "all-sources"
+
+
+def _and(where: str) -> str:
+    """Keyword for appending a condition to a possibly-empty WHERE clause."""
+    return "AND" if where else "WHERE"

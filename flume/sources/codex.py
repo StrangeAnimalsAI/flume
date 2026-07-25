@@ -90,6 +90,7 @@ from typing import Any
 from flume.sources import DiscoveredTranscript
 from flume.sources.common import (
     as_string,
+    is_nav_shell,
     iso_ts_ns,
     iter_jsonl_objects,
     json_text,
@@ -963,3 +964,28 @@ def _surface(value: Any) -> str | None:
     return None
 
 
+
+
+# ---------------------------------------------------------------------------
+# Tool vocabulary (for navigation-time attribution)
+#
+# Codex works almost entirely through the shell: exec_command carries both
+# navigation (`rg`, `cat`) and real work (`forge test`), so the command text
+# decides. apply_patch is the edit primitive.
+
+_SHELL_TOOLS = {"exec_command", "exec", "write_stdin", "shell"}
+_EDIT_TOOLS = {"apply_patch"}
+_SUBAGENT_TOOLS = {"spawn_agent", "wait_agent"}
+
+
+def classify_tool(name: str | None, args_preview: str | None) -> str:
+    """Classify one tool call as navigation / editing / subagent / other."""
+    if name in _SHELL_TOOLS:
+        return "navigation" if is_nav_shell(args_preview) else "bash-other"
+    if name in _EDIT_TOOLS:
+        return "editing"
+    if name in _SUBAGENT_TOOLS:
+        return "subagent"
+    if name == "read_file":
+        return "navigation"
+    return "other"
