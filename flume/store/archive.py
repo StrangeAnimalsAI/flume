@@ -54,10 +54,8 @@ class RawArchive(ABC):
         path: Path,
         *,
         mtime_ns: int | None = None,
-        data: bytes | None = None,
     ) -> ArchiveEntry | None:
-        """Store a copy of `path` (or of `data`, when the caller already
-        read the file — one snapshot for capture, hash, and parse).
+        """Store a copy of `path`, streaming rather than buffering it.
         Returns None if this exact content (source, session_id, sha256)
         is already archived."""
 
@@ -121,6 +119,29 @@ CREATE INDEX IF NOT EXISTS idx_blobs_source_captured ON blobs (source, captured_
 """
 
 
+_STREAM_CHUNK = 1 << 20
+
+
+def sha256_file(path: Path) -> tuple[str, int]:
+    """(sha256 hex, byte count) computed without holding the file."""
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(_STREAM_CHUNK), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _compress_to(path: Path, blob: Path) -> None:
+    """Stream `path` into a gzip blob. mtime=0 keeps output deterministic."""
+    with path.open("rb") as src, open(blob, "wb") as fh:
+        with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0) as gz:
+            for chunk in iter(lambda: src.read(_STREAM_CHUNK), b""):
+                gz.write(chunk)
+    os.chmod(blob, 0o600)
+
+
 def _fs_name(value: str) -> str:
     """Filesystem-safe component: ids come from transcript CONTENT, which is
     untrusted — a crafted session id must not become a path traversal."""
@@ -147,13 +168,15 @@ class FsRawArchive(RawArchive):
         path: Path,
         *,
         mtime_ns: int | None = None,
-        data: bytes | None = None,
     ) -> ArchiveEntry | None:
-        """Capture one immutable copy. Pass `data` when the caller already
-        read the file so capture, sha, and parse share one snapshot."""
-        if data is None:
-            data = path.read_bytes()
-        sha = hashlib.sha256(data).hexdigest()
+        """Capture one immutable copy, streaming.
+
+        Transcripts reach multi-GB (a 4.5 GB rollout is what forced this),
+        so the file is never held in memory: it is hashed in one streaming
+        pass and compressed in another. Both passes sit inside the ingest
+        loop's quiet-file window, the same bound the mappers already rely
+        on when they re-read the path."""
+        sha, size = sha256_file(path)
         existing = self._conn.execute(
             "SELECT id, blob_path FROM blobs "
             "WHERE source=? AND session_id=? AND sha256=?",
@@ -165,10 +188,7 @@ class FsRawArchive(RawArchive):
             blob = self.blob_root / existing["blob_path"]
             if not blob.is_file():
                 blob.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                with open(blob, "wb") as fh:
-                    with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0) as gz:
-                        gz.write(data)
-                os.chmod(blob, 0o600)
+                _compress_to(path, blob)
             return None
 
         captured_ns = time.time_ns()
@@ -182,11 +202,7 @@ class FsRawArchive(RawArchive):
         if not blob.resolve().is_relative_to(self.blob_root.resolve()):
             raise ValueError(f"blob path escapes archive root: {rel}")
         blob.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # mtime=0 keeps the gzip output deterministic for identical input.
-        with open(blob, "wb") as fh:
-            with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0) as gz:
-                gz.write(data)
-        os.chmod(blob, 0o600)
+        _compress_to(path, blob)
 
         with self._conn:
             cur = self._conn.execute(
@@ -199,7 +215,7 @@ class FsRawArchive(RawArchive):
                     source,
                     session_id,
                     sha,
-                    len(data),
+                    size,
                     str(rel),
                     str(path),
                     mtime_ns,

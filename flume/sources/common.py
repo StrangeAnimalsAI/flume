@@ -31,42 +31,77 @@ def is_nav_shell(args_preview: str | None) -> bool:
     return bool(NAV_SHELL_RE.search(args_preview or ""))
 
 
-def iter_jsonl_objects(path: Path) -> Iterable[dict[str, Any]]:
-    """Yield JSON objects from a JSONL file, skipping blank/invalid lines."""
+# A single JSONL line larger than this is not analyzable content — it is a
+# runaway tool output the agent wrote into its own transcript. Observed in
+# the wild: a 4.5 GB Codex rollout of 976 lines, one of them several GB,
+# which failed ingest outright with "OverflowError: string longer than
+# INT_MAX bytes" (json rejects strings past INT_MAX) after buffering
+# gigabytes to get there. Oversized lines are skipped and never held whole;
+# the raw archive keeps the original bytes, which is what that layer is for.
+MAX_LINE_BYTES = 64 * 1024 * 1024
+_CHUNK_BYTES = 1 << 20
+
+
+def iter_jsonl_lines(
+    path: Path, *, max_bytes: int = MAX_LINE_BYTES
+) -> Iterable[str]:
+    """Yield non-blank lines, dropping any longer than `max_bytes`.
+
+    Reads fixed-size chunks and discards an oversized line as it streams,
+    so peak memory stays bounded regardless of how large one line is."""
     try:
-        with path.open() as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(obj, dict):
-                    yield obj
+        handle = path.open("rb")
     except FileNotFoundError:
         return
+    with handle:
+        pending: list[bytes] = []
+        pending_size = 0
+        skipping = False  # inside an oversized line, waiting for its newline
+        for chunk in iter(lambda: handle.read(_CHUNK_BYTES), b""):
+            start = 0
+            while (newline := chunk.find(b"\n", start)) != -1:
+                piece = chunk[start:newline]
+                start = newline + 1
+                if skipping:  # that newline ends the oversized line
+                    skipping = False
+                    pending, pending_size = [], 0
+                    continue
+                if pending_size + len(piece) > max_bytes:
+                    pending, pending_size = [], 0
+                    continue
+                pending.append(piece)
+                line = b"".join(pending).strip()
+                pending, pending_size = [], 0
+                if line:
+                    yield line.decode("utf-8", "replace")
+            tail = chunk[start:]
+            if skipping:
+                continue
+            if pending_size + len(tail) > max_bytes:
+                pending, pending_size, skipping = [], 0, True
+                continue
+            pending.append(tail)
+            pending_size += len(tail)
+        if not skipping and pending:
+            line = b"".join(pending).strip()
+            if line:
+                yield line.decode("utf-8", "replace")
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Read all JSON objects from a JSONL file; empty list on any OS error."""
-    out: list[dict[str, Any]] = []
-    try:
-        text = path.read_text()
-    except OSError:
-        return out
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+def iter_jsonl_objects(path: Path) -> Iterable[dict[str, Any]]:
+    """Yield JSON objects from a JSONL file, skipping blank/invalid lines."""
+    for line in iter_jsonl_lines(path):
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(obj, dict):
-            out.append(obj)
-    return out
+            yield obj
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read all JSON objects from a JSONL file; empty list when unreadable."""
+    return list(iter_jsonl_objects(path))
 
 
 def iso_ts_ns(ts: Any) -> int | None:

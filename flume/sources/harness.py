@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.harness.transcript import ts_ns
-from flume.sources.common import is_nav_shell
+from flume.sources.common import is_nav_shell, iter_jsonl_lines
 from flume.store.base import ContentRow
 
 Span = dict[str, Any]
@@ -33,15 +33,11 @@ def _trace_id(session_id: str) -> str:
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
     events = []
-    with path.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    for line in iter_jsonl_lines(path):
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     return events
 
 
