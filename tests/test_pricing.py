@@ -100,3 +100,20 @@ def test_malformed_entries_raise_clearly(tmp_path: Path) -> None:
         load_prices(_config(tmp_path, '[pricing]\n"x" = { input = 1.0 }\n'))
     with pytest.raises(ValueError, match="list form"):
         load_prices(_config(tmp_path, '[pricing]\n"x" = [1.0]\n'))
+
+
+def test_index_markers_are_configurable(tmp_path: Path, monkeypatch) -> None:
+    """The agent-index detector must not hardcode one tool's convention."""
+    from flume.analysis.insights import DEFAULT_INDEX_MARKERS, _index_markers
+
+    monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "none.toml"))
+    assert _index_markers() == list(DEFAULT_INDEX_MARKERS)
+    # Defaults cover the common conventions, not just one tool's.
+    assert "AGENTS.md" in DEFAULT_INDEX_MARKERS
+
+    config = _config(tmp_path, """
+[insights]
+index_markers = [".myagent/index", "NOTES.md"]
+""")
+    monkeypatch.setenv("FLUME_CONFIG", str(config))
+    assert _index_markers() == [".myagent/index", "NOTES.md"]

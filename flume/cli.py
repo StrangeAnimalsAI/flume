@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 _SUBCOMMANDS: dict[str, str] = {
     "analyze": "query and analyze the session store",
     "serve": "serve the store UI/API over HTTP",
-    "ingest": "auto-ingest Claude Code and Codex session files",
+    "ingest": "auto-ingest agent session files (see --source)",
     "harness": "run the instrumented agent harness",
 }
 

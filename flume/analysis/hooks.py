@@ -1,5 +1,11 @@
 """Hook-event extraction: nudges, denials, and injected feedback.
 
+SOURCE-SPECIFIC: this reads Claude Code's hook markers. Hooks are a
+Claude Code feature, not a universal agent concept, so `analyze hooks`
+finds nothing for other sources — that is an empty result, not an error.
+An agent with its own intervention mechanism would want a sibling module
+parsing its markers, not a generalization of this one.
+
 Claude Code writes every hook intervention into the transcript as a
 tool_result error shaped like:
 

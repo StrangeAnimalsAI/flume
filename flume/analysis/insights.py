@@ -67,7 +67,7 @@ def run_insights(
         _idle_gap_churn,
         _marathon_sessions,
         _premium_grind,
-        _docnav_ignored,
+        _index_ignored,
         _nav_share,
         _thinking_volume,
     ):
@@ -103,8 +103,8 @@ def _toolgaps(store, since_ns, source) -> list[Finding]:
             f"(imports: {cluster['imports']})",
             f"Example: {cluster['example'][:200]}",
             n, "sessions",
-            "Build a durable CLI for this and register it in the repo's "
-            "CLAUDE.md/AGENTS.md so agents stop re-deriving it.",
+            "Build a durable CLI for this and document it wherever your "
+            "agent reads project instructions, so it stops re-deriving it.",
             {"session_ids": cluster["session_ids"]},
         ))
     return out
@@ -131,8 +131,8 @@ def _repeat_waste(store, since_ns, source) -> list[Finding]:
             "Identical arguments returned identical bytes — zero new "
             f"information; ~{agg['ms'] / 60000:.0f} min of tool time.",
             agg["calls"], "wasted calls",
-            "Retry loop or schema mismatch — fix the calling prompt/schema, "
-            "or add a PreToolUse repeat-guard hook.",
+            "Retry loop or schema mismatch — fix the calling prompt or "
+            "schema, or add a pre-tool guard if your agent supports hooks.",
         ))
     return out
 
@@ -220,7 +220,7 @@ def _context_floods(store, since_ns, source) -> list[Finding]:
         f"Worst single call: {r['worst'] / 1e6:.1f} MB. Every byte rides in "
         "context for the rest of the session and re-bills each turn.",
         r["chars"] / 1e6, "MB",
-        "Bound the producing command (repo-nav / head / --max-count), or "
+        "Bound the producing command (head, --max-count, a paging flag), or "
         "write output to a file and read ranges.",
     ) for r in rows]
 
@@ -251,7 +251,7 @@ def _idle_gap_churn(store, since_ns, source) -> list[Finding]:
         "The prompt cache TTL is 5 minutes; resuming an idle session "
         "re-writes the whole context at a 1.25x premium.",
         tokens / 1e6, "M tokens",
-        "End the session when stepping away; start fresh (or /clear) on "
+        "End the session when stepping away; start a fresh one on "
         "return. Batch replies while a session is active.",
     )]
 
@@ -296,46 +296,73 @@ def _premium_grind(store, since_ns, source) -> list[Finding]:
         "High-volume tool loops on a premium model; much of this is "
         "typically exploration/mechanics a cheaper model handles.",
         r["tool_call_count"], "tool calls",
-        "Delegate fan-out reads to the `scout` (haiku) subagent and "
-        "well-specified edits to `mech` (sonnet); keep the premium model "
-        "for judgment.",
+        "Delegate fan-out reads and well-specified mechanical edits to a "
+        "cheaper model; keep the premium model for judgment.",
     ) for r in rows]
 
 
-def _docnav_ignored(store, since_ns, source) -> list[Finding]:
-    """Sessions grinding navigation in repos that HAVE a _docnav index."""
+# Files and directories that mean "this repo has agent-readable context":
+# a symbol index, a rules directory, an instruction file. Whichever
+# conventions a user's tooling follows, listed in ~/.flume/config.toml:
+#
+#     [insights]
+#     index_markers = ["_docnav", ".cursor/rules", "AGENTS.md"]
+DEFAULT_INDEX_MARKERS = ("AGENTS.md", "CLAUDE.md", ".cursor/rules", "_docnav")
+
+
+def _index_markers() -> list[str]:
+    from flume.store.config import load_toml
+
+    configured = (load_toml().get("insights") or {}).get("index_markers")
+    if isinstance(configured, list) and configured:
+        return [str(m) for m in configured]
+    return list(DEFAULT_INDEX_MARKERS)
+
+
+def _index_ignored(store, since_ns, source) -> list[Finding]:
+    """Heavy navigation in repos that DO carry agent-readable context.
+
+    An index or instruction file the agent never opens is worse than none:
+    it cost something to produce and is silently not paying off."""
+    markers = _index_markers()
     where, params = _scope(since_ns, source)
     sessions = store._all(
         f"""
         SELECT session_id, cwd, project, tool_call_count FROM sessions s
         {where} {_and(where)} tool_call_count > 30 AND cwd IS NOT NULL
         """, params)
-    indexed = [s for s in sessions if (Path(s["cwd"]) / "_docnav").is_dir()]
+    indexed = [s for s in sessions if _has_marker(s["cwd"], markers)]
     if not indexed:
         return []
     marks = ",".join("?" for _ in indexed)
+    match = " OR ".join(f'"{m}"' for m in markers)
     used = {r["session_id"] for r in store._all(
         f"""
         SELECT DISTINCT c.session_id FROM contents_fts
         JOIN contents c ON c.id = contents_fts.rowid
-        WHERE contents_fts MATCH '"_docnav"'
+        WHERE contents_fts MATCH ?
             AND c.session_id IN ({marks})
-        """, tuple(s["session_id"] for s in indexed))}
+        """, (match, *(s["session_id"] for s in indexed)))}
     ignored = [s for s in indexed if s["session_id"] not in used]
     if len(ignored) < 3:
         return []
     projects = sorted({s["project"] or "?" for s in ignored})
     return [_finding(
-        "docnav_ignored", _fp(source), 3,
-        f"{len(ignored)} of {len(indexed)} heavy sessions in indexed repos "
-        "never consulted _docnav",
-        f"Projects: {', '.join(projects[:5])}. The index exists but the "
-        "agent navigated the tree instead.",
+        "index_ignored", _fp(source), 3,
+        f"{len(ignored)} of {len(indexed)} heavy sessions in repos with an "
+        "agent index never consulted it",
+        f"Projects: {', '.join(projects[:5])}. The context exists "
+        f"({', '.join(markers)}) but the agent explored the tree instead.",
         len(ignored), "sessions",
-        "Strengthen the CLAUDE.md nav instruction in those repos, or "
-        "regenerate stale indexes (repo-nav index).",
+        "Point your project instructions at the index explicitly, or "
+        "refresh it if it has gone stale.",
         {"session_ids": [s["session_id"] for s in ignored[:10]]},
     )]
+
+
+def _has_marker(cwd: str, markers: list[str]) -> bool:
+    root = Path(cwd)
+    return any((root / marker).exists() for marker in markers)
 
 
 def _nav_share(store, since_ns, source) -> list[Finding]:
@@ -365,9 +392,9 @@ def _nav_share(store, since_ns, source) -> list[Finding]:
         f"{summary['active_hours']}h)",
         f"Worst sessions: {worst_txt}.",
         median * 100, "% of active time",
-        "Index the busiest repos (repo-nav index) and keep the CLAUDE.md "
-        "nav contract fresh; run experiments (analyze experiment start) to "
-        "verify tooling changes actually move this number.",
+        "Give the busiest repos an agent-readable index and point your "
+        "project instructions at it; run experiments (analyze experiment "
+        "start) to verify tooling changes actually move this number.",
         {"nav_share_mean": summary["nav_share_mean"],
          "nav_calls": summary["nav_calls"],
          "worst_sessions": [r["session_id"] for r in worst]},
@@ -414,8 +441,8 @@ def _thinking_volume(store, since_ns, source) -> list[Finding]:
         "emitted in real time (generation dominates session wall-clock).",
         invisible * 100, "% of output tokens",
         "Trim thinking volume where judgment isn't needed: delegate "
-        "mechanical loops to scout/mech, and experiment with effortLevel "
-        "(analyze experiment start effort-<level>) before/after.",
+        "mechanical loops to a cheaper model, and sweep your agent's effort "
+        "or reasoning setting (analyze experiment start effort-<level>).",
     )]
 
 

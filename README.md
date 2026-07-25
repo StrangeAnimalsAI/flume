@@ -34,6 +34,11 @@ Three layers, each independently rebuildable:
    codex = "30d"
    ```
 
+The same file carries `[pricing]` (add or reprice any model, including
+local ones at zero) and `[insights]` (which files mark an agent-readable
+index). Nothing about pricing or tooling conventions is baked into the
+code.
+
 Source caveat the store cannot fix: recent Claude Code builds often persist
 thinking blocks as encrypted signatures, and Codex `reasoning` items are
 always encrypted — for those sessions the store has counts, not text.
@@ -41,7 +46,11 @@ Plaintext thinking is captured whole wherever it exists (see the harness
 below for recovering it going forward).
 
 Sources are pluggable adapters (`claude-code`, `codex`, and a traced
-`harness`) — the vendor is just an argument.
+`harness`) — the vendor is just an argument. Nothing in the pipeline
+assumes a particular model or vendor: prices come from a config table you
+extend, tool vocabularies come from each source adapter, and the harness
+drives whichever backend you point it at, including a local model. A core
+install carries no model-vendor dependency at all.
 
 The package layout mirrors the pipeline, and dependencies point one way
 (`cli → ingest → sources → store`):
@@ -94,7 +103,12 @@ flume analyze hooks                    # nudge/denial interventions
 findings: `toolgap` (throwaway scripts → durable CLIs), `repeat_waste`
 (byte-identical re-work), `schema_loop` (StructuredOutput retry grinding),
 `error_hotspot`, `context_flood`, `idle_gap_churn`, `marathon_session`,
-`premium_grind`, `docnav_ignored`.
+`premium_grind`, `index_ignored`.
+
+Detectors are source- and vendor-agnostic: they find agentic-coding
+pathologies (duplicate calls, idle-gap cache churn, navigation grind),
+not Claude-specific ones. `analyze insights --source X` scopes to one
+source; the default covers all of them.
 
 ### Provenance & rebuild
 
@@ -111,19 +125,32 @@ change, then `rebuild --stale` re-ingests older rows from the raw archive
 > directories you'd let an agent loose in.
 
 Claude Code stopped persisting plaintext thinking (~May 2026). The harness
-requests summarized thinking and writes it into the store:
+runs its own traced agent loop and writes whatever reasoning the model
+exposes into the store:
 
 ```sh
-flume harness "why is retention skipping codex blobs?" --backend sdk
+flume harness "why is retention skipping codex blobs?" --backend claude-sdk
+flume harness "..." --backend openai --model qwen3-coder   # local via Ollama
 ```
 
-`--backend sdk` drives the Agent SDK under your Claude plan login (thinking
-summaries, plan-billed); `--backend api` uses the raw Anthropic API.
+Backends are pluggable, and the transcript format is the contract — a
+session run against a local model is ingested and analyzed exactly like a
+hosted one:
+
+| `--backend` | Drives | Needs |
+|---|---|---|
+| `anthropic` | Anthropic Messages API, pay-per-token | `flume[anthropic]` |
+| `claude-sdk` | Claude Agent SDK on a plan login, full tool suite | `flume[claude-sdk]` |
+| `openai` | Any OpenAI-compatible `/v1/chat/completions` server — hosted OpenAI, Ollama, llama.cpp, vLLM | nothing (stdlib) |
+
+Point the `openai` backend anywhere with `--base-url` (default is Ollama's
+`http://localhost:11434/v1`).
 
 ## Install & run
 
 ```sh
-uv venv && uv pip install -e .
+uv venv && uv pip install -e .          # core: ingest + analyze, no model SDKs
+uv pip install -e '.[harness]'         # + the Anthropic harness backends
 flume analyze overview
 flume serve            # http://localhost:8321
 ```

@@ -54,14 +54,25 @@ class RetentionPolicy:
         }
 
 
-def load_policy(path: Path | None = None) -> RetentionPolicy:
+def load_toml(path: Path | None = None) -> dict:
+    """Whole config document, or {} when there is no config file.
+
+    Shared by every consumer of ~/.flume/config.toml (retention, pricing,
+    insight thresholds) so they agree on the path and the FLUME_CONFIG
+    override."""
     resolved = path or Path(
         os.environ.get("FLUME_CONFIG", str(DEFAULT_CONFIG_PATH))
     )
     if not resolved.is_file():
-        return RetentionPolicy()
+        return {}
     with open(resolved, "rb") as fh:
-        doc = tomllib.load(fh)
+        return tomllib.load(fh)
+
+
+def load_policy(path: Path | None = None) -> RetentionPolicy:
+    doc = load_toml(path)
+    if not doc:
+        return RetentionPolicy()
     section = doc.get("retention") or {}
     return RetentionPolicy(
         raw_default_ns=parse_duration_ns(section.get("raw", "forever")),
