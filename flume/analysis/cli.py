@@ -201,7 +201,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--as-model",
         default=None,
-        help="What-if: reprice ALL usage at this model's rates (e.g. claude-fable-5).",
+        help="What-if: reprice ALL usage at this model's rates (any priced model).",
     )
     p.set_defaults(func=_cmd_cost)
 
@@ -451,29 +451,6 @@ def _parse_when(value: str | None) -> int | None:
     return int(parsed.timestamp() * 1_000_000_000)
 
 
-# $/MTok (input, output). Cache read = 0.1x input; cache write = 1.25x input
-# (5-minute TTL). Prices as of 2026-07 — update when Anthropic pricing changes.
-# Sonnet 5 intro pricing ($2/$10) runs through 2026-08-31; sticker is $3/$15.
-_PRICES = {
-    "claude-fable-5": (10.0, 50.0),
-    "claude-mythos-5": (10.0, 50.0),
-    "claude-opus-4-8": (5.0, 25.0),
-    "claude-opus-4-7": (5.0, 25.0),
-    "claude-opus-4-6": (5.0, 25.0),
-    "claude-opus-4-5": (5.0, 25.0),
-    "claude-sonnet-5": (2.0, 10.0),  # intro through 2026-08-31
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-haiku-4-5": (1.0, 5.0),
-}
-
-
-def _price_for(model: str | None) -> tuple[float, float] | None:
-    if not model:
-        return None
-    for key, price in _PRICES.items():
-        if model.startswith(key):
-            return price
-    return None
 
 
 def _cmd_cost(store, args) -> list[dict[str, Any]]:
@@ -508,12 +485,18 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         """,
         tuple(params),
     )
-    forced = _price_for(args.as_model) if args.as_model else None
+    from flume.pricing import load_prices
+
+    book = load_prices()
+    forced = book.for_model(args.as_model) if args.as_model else None
     if args.as_model and forced is None:
-        raise SystemExit(f"unknown model {args.as_model!r}; known: {list(_PRICES)}")
+        raise SystemExit(
+            f"unpriced model {args.as_model!r}; known: {', '.join(book.known())}. "
+            "Add it under [pricing] in ~/.flume/config.toml."
+        )
     buckets: dict[str, dict[str, Any]] = {}
     for row in rows:
-        price = forced or _price_for(row["model"])
+        price = forced or book.for_model(row["model"])
         bucket = buckets.setdefault(
             row["grp"] or "?",
             {"group": row["grp"], "turns": 0, "usd": 0.0, "usd_reads": 0.0,
@@ -523,11 +506,10 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         if price is None:
             bucket["unpriced_turns"] += row["turns"]
             continue
-        p_in, p_out = price
-        reads = (row["cr"] or 0) * p_in * 0.1 / 1e6
-        writes = (row["cc"] or 0) * p_in * 1.25 / 1e6
-        output = (row["o"] or 0) * p_out / 1e6
-        raw = (row["i"] or 0) * p_in / 1e6
+        reads = (row["cr"] or 0) * price.cache_read / 1e6
+        writes = (row["cc"] or 0) * price.cache_write / 1e6
+        output = (row["o"] or 0) * price.output / 1e6
+        raw = (row["i"] or 0) * price.input / 1e6
         bucket["usd_reads"] += reads
         bucket["usd_writes"] += writes
         bucket["usd_output"] += output

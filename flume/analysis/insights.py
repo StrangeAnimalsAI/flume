@@ -25,8 +25,22 @@ from flume.analysis.navtime import nav_summary, session_nav_shares
 
 Finding = dict[str, Any]
 
-PREMIUM_MODELS = ("claude-fable-5", "claude-mythos", "claude-opus")
 IDLE_GAP_NS = 300 * 1_000_000_000  # 5 min — prompt-cache TTL
+
+
+def _premium_sql(column: str) -> str:
+    """SQL predicate matching premium-tier models.
+
+    "Premium" is derived from the price table, not a hardcoded vendor name
+    list: any model priced at or above the premium output threshold counts,
+    so the detector works for whatever models a user actually runs. Falls
+    back to matching nothing when no priced model clears the bar."""
+    from flume.pricing import load_prices
+
+    prefixes = load_prices().premium_models()
+    if not prefixes:
+        return "0"
+    return " OR ".join(f"{column} LIKE '{p}%'" for p in prefixes)
 
 
 def run_insights(
@@ -267,7 +281,7 @@ def _marathon_sessions(store, since_ns, source) -> list[Finding]:
 def _premium_grind(store, since_ns, source) -> list[Finding]:
     """Premium-model sessions doing high-volume mechanical tool work."""
     where, params = _scope(since_ns, source)
-    premium = " OR ".join(f"model LIKE '{m}%'" for m in PREMIUM_MODELS)
+    premium = _premium_sql("model")
     rows = store._all(
         f"""
         SELECT session_id, project, model, tool_call_count, output_tokens
@@ -369,7 +383,7 @@ def _thinking_volume(store, since_ns, source) -> list[Finding]:
     share of wall time is volume-driven: less thinking = less waiting AND
     less spend. Levers: effort level, delegation to non-premium models."""
     where, params = _scope(since_ns, source)
-    premium = " OR ".join(f"t.model LIKE '{m}%'" for m in PREMIUM_MODELS)
+    premium = _premium_sql("t.model")
     row = store._one(
         f"""
         SELECT SUM(t.output_tokens) out_tok, SUM(t.text_chars) text_chars
