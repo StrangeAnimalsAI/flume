@@ -579,3 +579,40 @@ def test_list_sessions_filters(tmp_path: Path) -> None:
         assert len(store.list_sessions(source="codex")) == 1
         assert len(store.list_sessions(cwd_like="Code/demo")) == 2
         assert store.list_sessions(limit=1)[0]["source"] == "codex"  # newest first
+
+
+def test_active_ms_falls_back_to_turn_gaps_when_durations_are_missing() -> None:
+    """Recent Claude Code transcripts carry no usable per-turn duration, so
+    summing them left active_ms at 0 for 100% of claude-code sessions and
+    made `analyze show` report a misleading "0ms"."""
+    from flume.store.bundle import _active_ms
+
+    sec = 1_000_000_000
+    base = 1_780_000_000 * sec
+    turns = [
+        {"duration_ms": 0, "started_at_ns": base},
+        {"duration_ms": 0, "started_at_ns": base + 30 * sec},   # 30s of work
+        {"duration_ms": 0, "started_at_ns": base + 50 * sec},   # 20s of work
+        # A 2-hour gap is the human away from the keyboard, not work.
+        {"duration_ms": 0, "started_at_ns": base + 7250 * sec},
+    ]
+    assert _active_ms(turns) == 50_000
+
+
+def test_active_ms_prefers_real_durations_when_present() -> None:
+    from flume.store.bundle import _active_ms
+
+    turns = [
+        {"duration_ms": 1500, "started_at_ns": 1},
+        {"duration_ms": 2500, "started_at_ns": 2},
+    ]
+    assert _active_ms(turns) == 4000
+
+
+def test_active_ms_handles_degenerate_turn_lists() -> None:
+    from flume.store.bundle import _active_ms
+
+    assert _active_ms([]) == 0
+    assert _active_ms([{"duration_ms": 0, "started_at_ns": 5}]) == 0
+    # Missing timestamps must not raise.
+    assert _active_ms([{"duration_ms": 0, "started_at_ns": None}]) == 0

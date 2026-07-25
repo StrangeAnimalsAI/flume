@@ -19,7 +19,7 @@ Span = dict[str, Any]
 # Provenance stamp written to every session row. Bump whenever flume/sources/*
 # or this module change what they derive from raw bytes;
 # `flume analyze rebuild --stale` then re-ingests older rows.
-PIPELINE_VERSION = 3
+PIPELINE_VERSION = 4
 
 _ARGS_PREVIEW_MAX = 500
 
@@ -89,7 +89,7 @@ def bundle_from_spans(
         "started_at_ns": started,
         "ended_at_ns": ended,
         "wall_ms": max(0, (ended - started) // 1_000_000),
-        "active_ms": sum(t["duration_ms"] or 0 for t in turns),
+        "active_ms": _active_ms(turns),
         "turn_count": len(turns),
         "tool_call_count": len(tool_calls),
         "input_tokens": sum(t["input_tokens"] for t in turns),
@@ -183,6 +183,36 @@ def derive_project(cwd: Any) -> str | None:
     if parts and parts[0] == "Code":
         parts = parts[1:]
     return "/".join(parts[-2:]) if parts else "~"
+
+
+# Gaps longer than this are the human away from the keyboard, not work.
+# Matches analysis.navtime.CYCLE_CAP_S, which attributes time the same way.
+_IDLE_CAP_MS = 300_000
+
+
+def _active_ms(turns: list[dict[str, Any]]) -> int:
+    """Time actually spent working, as opposed to wall-clock.
+
+    Prefers summed per-turn durations. Recent Claude Code transcripts
+    stopped carrying usable ones — every `duration_ms` is 0, which left
+    this field dead for 100% of claude-code sessions and made
+    `analyze show` report a misleading "0ms". When durations are absent,
+    fall back to summing the gaps between consecutive turn starts and
+    dropping any longer than the idle cap: the same cycle attribution
+    navtime uses, computed from timestamps that are always present.
+    """
+    summed = sum(t["duration_ms"] or 0 for t in turns)
+    if summed:
+        return summed
+    stamps = sorted(
+        t["started_at_ns"] for t in turns if t.get("started_at_ns") is not None
+    )
+    active = 0
+    for begin, end in zip(stamps, stamps[1:], strict=False):
+        gap_ms = (end - begin) // 1_000_000
+        if 0 < gap_ms <= _IDLE_CAP_MS:
+            active += gap_ms
+    return active
 
 
 def _first_model(turns: list[dict[str, Any]]) -> str | None:
