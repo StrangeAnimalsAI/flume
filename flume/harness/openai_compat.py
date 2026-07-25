@@ -16,11 +16,21 @@ some return a `reasoning_content` field, some `reasoning`, most nothing at
 all. Whatever is present is recorded as a thinking block; when nothing is,
 the transcript simply has no thinking rows. That is a source limitation,
 recorded honestly, exactly as with Codex's encrypted reasoning.
+
+Tool-calling quality varies more than the wire format does. Verified
+against Ollama 2026-07: a well-formed `tool_calls` response round-trips
+correctly, but the same model on the same prompt sometimes emits tool-call
+syntax the host cannot parse, and the server then returns billed output
+tokens with neither text nor `tool_calls`. That is not recoverable here —
+the tokens never reach the client — so the turn is annotated rather than
+silently dropped (see `_degenerate_note`). Prefer models with first-class
+tool support when the run depends on tools.
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -137,14 +147,24 @@ def run_openai_session(
                 })
 
             usage = body.get("usage") or {}
-            log.write({
+            event: dict[str, Any] = {
                 "type": "assistant",
                 "model": body.get("model") or model,
                 "stop_reason": stop_reason,
                 "duration_ms": duration_ms,
                 "usage": _usage(usage),
                 "content": content,
-            })
+            }
+            # A turn with billed output but nothing parseable means the
+            # server produced tokens it could not classify — in practice a
+            # model emitting tool-call syntax its host cannot parse, which
+            # is common with smaller local models. Say so instead of ending
+            # the session with an empty transcript and no explanation.
+            note = _degenerate_note(content, usage)
+            if note:
+                event["note"] = note
+                print(f"\n[warning] {note}", file=sys.stderr, flush=True)
+            log.write(event)
             messages.append(_assistant_message(text, tool_calls))
 
             if not tool_calls:
@@ -175,6 +195,21 @@ def run_openai_session(
     if echo:
         print(f"\n[transcript: {path}]")
     return path
+
+
+def _degenerate_note(content: list[dict[str, Any]], usage: dict[str, Any]) -> str | None:
+    """Explain a turn that billed output tokens but yielded nothing usable."""
+    if content:
+        return None
+    produced = int(usage.get("completion_tokens") or 0)
+    if produced <= 0:
+        return None
+    return (
+        f"the server billed {produced} output tokens but returned no text and "
+        "no tool calls — the model likely emitted tool-call syntax its host "
+        "could not parse. Try a model with first-class tool support, or drop "
+        "--backend openai for one that does."
+    )
 
 
 def _assistant_message(text: str, tool_calls: list[dict[str, Any]]) -> dict[str, Any]:

@@ -137,3 +137,47 @@ def test_arguments_that_are_not_json_still_run(tmp_path: Path) -> None:
     events = [json.loads(line) for line in path.read_text().splitlines()]
     result = next(e for e in events if e["type"] == "tool_result")
     assert "raw" in result["output"]
+
+
+def test_degenerate_turn_is_explained_not_silent(tmp_path: Path, capsys) -> None:
+    """Found by running against a live Ollama: a small model can emit
+    tool-call syntax its host cannot parse, so the server bills output
+    tokens and returns neither text nor tool_calls. The session used to end
+    with an empty transcript and no explanation."""
+    post = _fake_server([
+        _message(content="", usage={"prompt_tokens": 155, "completion_tokens": 29}),
+    ])
+    path = run_openai_session(
+        "count the files", model="m", transcript_dir=tmp_path, post=post, echo=False
+    )
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assistant = next(e for e in events if e["type"] == "assistant")
+    assert assistant["content"] == []
+    assert "29 output tokens" in assistant["note"]
+    assert "tool-call syntax" in assistant["note"]
+    assert "[warning]" in capsys.readouterr().err
+
+
+def test_no_note_when_the_turn_produced_nothing_at_all(tmp_path: Path) -> None:
+    # Zero output tokens is an ordinary empty answer, not a parse failure.
+    post = _fake_server([
+        _message(content="", usage={"prompt_tokens": 10, "completion_tokens": 0}),
+    ])
+    path = run_openai_session(
+        "hi", model="m", transcript_dir=tmp_path, post=post, echo=False
+    )
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assistant = next(e for e in events if e["type"] == "assistant")
+    assert "note" not in assistant
+
+
+def test_no_note_on_a_normal_answer(tmp_path: Path) -> None:
+    post = _fake_server([
+        _message(content="Three.", usage={"prompt_tokens": 10, "completion_tokens": 5}),
+    ])
+    path = run_openai_session(
+        "how many?", model="m", transcript_dir=tmp_path, post=post, echo=False
+    )
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assistant = next(e for e in events if e["type"] == "assistant")
+    assert "note" not in assistant
