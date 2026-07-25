@@ -8,9 +8,6 @@ build/
 .ruff_cache/
 .DS_Store
 
-# Real secrets for local infra stacks. Only .env.example is tracked.
-infra/**/.env
-
 # Local ingest checkpoints and session stores.
 .flume_auto_ingest*.sqlite3
 *.sqlite3-wal
@@ -19,6 +16,3 @@ infra/**/.env
 # repo-nav generated indexes (regenerate with `repo-nav index`)
 _docnav/
 .claude/settings.local.json
-
-# Stray linked worktree, not part of the repo
-.noslop-config-wt/
