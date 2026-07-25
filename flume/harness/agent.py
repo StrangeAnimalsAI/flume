@@ -13,6 +13,7 @@ This is a tracer for audits, not a Claude Code replacement.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import time
 import uuid
@@ -22,7 +23,8 @@ from typing import Any
 from flume.harness import HARNESS_VERSION
 from flume.harness.transcript import TranscriptWriter, content_block_dict
 
-DEFAULT_MODEL = "claude-opus-4-8"
+# Overridable so nothing here pins a model id that will age out.
+DEFAULT_MODEL = os.environ.get("FLUME_HARNESS_MODEL", "claude-opus-4-8")
 DEFAULT_TRANSCRIPT_DIR = Path("~/.flume/harness")
 BASH_TOOL = {"type": "bash_20250124", "name": "bash"}
 _OUTPUT_CAP = 100_000  # chars of tool output kept in context/transcript
@@ -176,6 +178,12 @@ def _ingest(path: Path) -> None:
         print(f"[ingested: {outcome.session_id}]")
 
 
+def _backend_names() -> list[str]:
+    from flume.harness.backends import names
+
+    return names()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="flume harness",
@@ -183,15 +191,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("prompt")
     parser.add_argument(
-        "--backend", default="api", choices=("api", "sdk"),
-        help="api: raw Anthropic SDK, pay-per-token, bash tool only. "
-        "sdk: Agent SDK on the Claude plan login, full Claude Code tool suite.",
+        "--backend", default="anthropic",
+        help="Which model to drive: " + ", ".join(
+            f"{b}" for b in _backend_names()
+        ) + ". 'api' and 'sdk' remain accepted as the old names for "
+        "'anthropic' and 'claude-sdk'.",
     )
-    parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--model", default=None,
+        help="Model id. Required for the openai backend; the anthropic "
+        "backend falls back to FLUME_HARNESS_MODEL or a current Opus.",
+    )
+    parser.add_argument(
+        "--base-url", default=None,
+        help="openai backend: server base URL (default: "
+        "$OPENAI_BASE_URL, else http://localhost:11434/v1 for Ollama).",
+    )
     parser.add_argument(
         "--effort", default=None,
         choices=("low", "medium", "high", "xhigh", "max"),
-        help="API backend only.",
+        help="anthropic backend only.",
     )
     parser.add_argument("--system", default=None)
     parser.add_argument("--max-turns", type=int, default=40)
@@ -207,30 +226,49 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.backend == "sdk":
+    from flume.harness.backends import get_backend
+
+    backend = get_backend(args.backend)
+    common = {
+        "system": args.system,
+        "max_turns": args.max_turns,
+        "transcript_dir": args.transcript_dir,
+    }
+    if backend.name == "claude-sdk":
         import anyio
 
-        from flume.harness.sdk_backend import run_sdk_session
-
         path = anyio.run(
-            lambda: run_sdk_session(
+            lambda: backend.run(
                 args.prompt,
                 model=args.model,
-                system=args.system,
-                max_turns=args.max_turns,
                 permission_mode=args.permission_mode,
-                transcript_dir=args.transcript_dir,
+                **common,
             )
         )
+    elif backend.name == "openai":
+        if not args.model:
+            raise SystemExit(
+                "--model is required for the openai backend (e.g. "
+                "--model qwen3-coder)"
+            )
+        import os
+
+        path = backend.run(
+            args.prompt,
+            model=args.model,
+            base_url=args.base_url
+            or os.environ.get("OPENAI_BASE_URL")
+            or "http://localhost:11434/v1",
+            max_tokens=args.max_tokens,
+            **common,
+        )
     else:
-        path = run_session(
+        path = backend.run(
             args.prompt,
             model=args.model or DEFAULT_MODEL,
             effort=args.effort,
-            system=args.system,
-            max_turns=args.max_turns,
             max_tokens=args.max_tokens,
-            transcript_dir=args.transcript_dir,
+            **common,
         )
     if not args.no_ingest:
         _ingest(path)

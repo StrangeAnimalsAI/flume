@@ -10,10 +10,17 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = [
-    "anthropic>=0.92",
-    "claude-agent-sdk>=0.2",
-]
+# Core install has NO model-vendor dependencies: ingesting and analyzing
+# transcripts never calls a model. The harness backends that do are extras.
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.92"]
+claude-sdk = ["claude-agent-sdk>=0.2"]
+# The openai backend speaks /v1/chat/completions over stdlib urllib — no
+# extra needed; it is listed for discoverability only.
+openai = []
+harness = ["anthropic>=0.92", "claude-agent-sdk>=0.2"]
 
 [project.scripts]
 flume = "flume.cli:main"
@@ -31,7 +38,12 @@ target-version = "py311"
 select = ["E4", "E7", "E9", "F", "B"]
 
 [dependency-groups]
+# Dev installs every harness extra so CI exercises all backends; the
+# published package still carries no model-vendor dependency.
 dev = [
     "pytest>=9.0",
     "ruff>=0.12",
+    "anthropic>=0.92",
+    "claude-agent-sdk>=0.2",
+    "anyio>=4",
 ]

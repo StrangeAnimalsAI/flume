@@ -281,25 +281,41 @@ wheels = [
 name = "flume"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
+
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
+claude-sdk = [
+    { name = "claude-agent-sdk" },
+]
+harness = [
     { name = "anthropic" },
     { name = "claude-agent-sdk" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "anthropic" },
+    { name = "anyio" },
+    { name = "claude-agent-sdk" },
     { name = "pytest" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.92" },
-    { name = "claude-agent-sdk", specifier = ">=0.2" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.92" },
+    { name = "anthropic", marker = "extra == 'harness'", specifier = ">=0.92" },
+    { name = "claude-agent-sdk", marker = "extra == 'claude-sdk'", specifier = ">=0.2" },
+    { name = "claude-agent-sdk", marker = "extra == 'harness'", specifier = ">=0.2" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anthropic", specifier = ">=0.92" },
+    { name = "anyio", specifier = ">=4" },
+    { name = "claude-agent-sdk", specifier = ">=0.2" },
     { name = "pytest", specifier = ">=9.0" },
     { name = "ruff", specifier = ">=0.12" },
 ]
