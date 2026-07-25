@@ -504,7 +504,13 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         )
         bucket["turns"] += row["turns"]
         if price is None:
-            bucket["unpriced_turns"] += row["turns"]
+            # Only count turns that actually consumed tokens. Sources record
+            # placeholder turns with no usage — Claude Code writes
+            # model="<synthetic>" for injected messages — and flagging those
+            # as unpriced implies missing rates where there is nothing to
+            # price.
+            if any(row[k] or 0 for k in ("i", "o", "cr", "cc")):
+                bucket["unpriced_turns"] += row["turns"]
             continue
         reads = (row["cr"] or 0) * price.cache_read / 1e6
         writes = (row["cc"] or 0) * price.cache_write / 1e6
