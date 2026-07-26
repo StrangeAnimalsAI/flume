@@ -17,7 +17,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from flume.sources import DiscoveredTranscript, SourceAdapter
+from flume.sources import DiscoveredTranscript, SourceAdapter, ToolClass
 from flume.sources.utils import (
     as_string,
     is_nav_shell,
@@ -497,7 +497,7 @@ _SHELL_TOOLS = {"Bash", "BashOutput"}
 _SUBAGENT_TOOLS = {"Agent", "Task"}
 
 
-def classify_tool(name: str | None, args_preview: str | None) -> str:
+def classify_tool(name: str | None, args_preview: str | None) -> ToolClass:
     """Classify one tool call as navigation / editing / subagent / other."""
     if name in _NAV_TOOLS:
         return "navigation"

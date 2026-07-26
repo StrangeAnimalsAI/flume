@@ -61,12 +61,25 @@ import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, get_args
 
 from flume.store.base import ContentRow
 from flume.store.config import DEFAULT_CONFIG_PATH, load_toml
 
 Span = dict[str, Any]
+
+# What `classify_tool` may return. A closed vocabulary flume defines
+# (unlike the vendor event names each adapter reads), so it gets a type
+# for the same reason ContentKind does: navtime and experiments compare
+# against these, and a typo there silently attributes zero time.
+ToolClass = Literal[
+    "navigation",
+    "editing",
+    "subagent",
+    "bash-other",
+    "other",
+]
+TOOL_CLASSES: tuple[ToolClass, ...] = get_args(ToolClass)
 
 # Attributes a vendor module exposes: its adapter, and — for pull-based
 # sources only — a factory building its `TranscriptSource`.
@@ -82,7 +95,7 @@ class SourceAdapter:
     map_spans: Callable[[Path], list[Span]]
     extract_contents: Callable[[Path, str], list[ContentRow]]
     probe: Callable[[Path], dict[str, Any]] | None = None
-    classify_tool: Callable[[str | None, str | None], str] | None = None
+    classify_tool: Callable[[str | None, str | None], ToolClass] | None = None
 
 
 @dataclass(frozen=True)

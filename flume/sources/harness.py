@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from flume.sources import SourceAdapter
+from flume.sources import SourceAdapter, ToolClass
 from flume.sources.utils import (
     is_nav_shell,
     iso_ts_ns,
@@ -241,7 +241,7 @@ def probe(path: Path, *, max_lines: int = 200) -> dict[str, Any]:
     return out
 
 
-def classify_tool(name: str | None, args_preview: str | None) -> str:
+def classify_tool(name: str | None, args_preview: str | None) -> ToolClass:
     """The harness exposes a single shell tool; the command text decides."""
     if name in ("bash", "Bash"):
         return "navigation" if is_nav_shell(args_preview) else "bash-other"

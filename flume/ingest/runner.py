@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,11 +30,28 @@ class IngestOutcome:
 IngestFunction = Callable[[IngestRequest], IngestOutcome | None]
 
 
+class IngestAct(StrEnum):
+    """What one pass decided about one file.
+
+    An enum because every member is written in one place and compared in
+    another (`_summarize` counts them): as bare strings a typo on either
+    side silently produces a zero count rather than an error.
+    """
+
+    INGESTED = "ingested"
+    EMPTY = "empty"
+    FAILED = "failed"
+    WOULD_INGEST = "would_ingest"
+    SKIP_ACTIVE = "skip_active"
+    SKIP_UNCHANGED = "skip_unchanged"
+    SKIP_VANISHED = "skip_vanished"
+
+
 @dataclass(frozen=True)
 class IngestAction:
     source_type: str
     path: Path
-    action: str
+    action: IngestAct
     status: str
     fingerprint: str | None = None
     mtime_ns: int | None = None
@@ -114,7 +132,7 @@ def run_once(
                 IngestAction(
                     source_type=transcript.source_type,
                     path=transcript.path,
-                    action="skip_vanished",
+                    action=IngestAct.SKIP_VANISHED,
                     status=IngestStatus.PENDING.value,
                     session_id=transcript.session_id,
                     trace_id=transcript.trace_id,
@@ -140,7 +158,7 @@ def run_once(
                 IngestAction(
                     source_type=transcript.source_type,
                     path=transcript.path,
-                    action="skip_active",
+                    action=IngestAct.SKIP_ACTIVE,
                     status=IngestStatus.ACTIVE.value,
                     fingerprint=fingerprint.identity,
                     mtime_ns=fingerprint.mtime_ns,
@@ -163,7 +181,7 @@ def run_once(
                 IngestAction(
                     source_type=transcript.source_type,
                     path=transcript.path,
-                    action="skip_unchanged",
+                    action=IngestAct.SKIP_UNCHANGED,
                     status=record.status.value,
                     fingerprint=fingerprint.identity,
                     mtime_ns=fingerprint.mtime_ns,
@@ -182,7 +200,7 @@ def run_once(
                 IngestAction(
                     source_type=transcript.source_type,
                     path=transcript.path,
-                    action="would_ingest",
+                    action=IngestAct.WOULD_INGEST,
                     status=(record.status.value if record else IngestStatus.PENDING.value),
                     fingerprint=fingerprint.identity,
                     mtime_ns=fingerprint.mtime_ns,
@@ -210,7 +228,7 @@ def run_once(
                 IngestAction(
                     source_type=transcript.source_type,
                     path=transcript.path,
-                    action="failed",
+                    action=IngestAct.FAILED,
                     status=IngestStatus.FAILED.value,
                     fingerprint=fingerprint.identity,
                     mtime_ns=fingerprint.mtime_ns,
@@ -232,7 +250,7 @@ def run_once(
                 IngestAction(
                     source_type=transcript.source_type,
                     path=transcript.path,
-                    action="empty",
+                    action=IngestAct.EMPTY,
                     status=IngestStatus.EMPTY.value,
                     fingerprint=fingerprint.identity,
                     mtime_ns=fingerprint.mtime_ns,
@@ -256,7 +274,7 @@ def run_once(
             IngestAction(
                 source_type=transcript.source_type,
                 path=transcript.path,
-                action="ingested",
+                action=IngestAct.INGESTED,
                 status=IngestStatus.INGESTED.value,
                 fingerprint=fingerprint.identity,
                 mtime_ns=fingerprint.mtime_ns,
@@ -280,17 +298,17 @@ def _summarize(
         source_type=source_type,
         dry_run=dry_run,
         discovered=len(actions),
-        ingested=sum(1 for action in actions if action.action == "ingested"),
-        empty=sum(1 for action in actions if action.action == "empty"),
-        failed=sum(1 for action in actions if action.action == "failed"),
-        skipped_active=sum(1 for action in actions if action.action == "skip_active"),
+        ingested=sum(1 for action in actions if action.action is IngestAct.INGESTED),
+        empty=sum(1 for action in actions if action.action is IngestAct.EMPTY),
+        failed=sum(1 for action in actions if action.action is IngestAct.FAILED),
+        skipped_active=sum(1 for action in actions if action.action is IngestAct.SKIP_ACTIVE),
         skipped_unchanged=sum(
-            1 for action in actions if action.action == "skip_unchanged"
+            1 for action in actions if action.action is IngestAct.SKIP_UNCHANGED
         ),
         skipped_vanished=sum(
-            1 for action in actions if action.action == "skip_vanished"
+            1 for action in actions if action.action is IngestAct.SKIP_VANISHED
         ),
-        would_ingest=sum(1 for action in actions if action.action == "would_ingest"),
+        would_ingest=sum(1 for action in actions if action.action is IngestAct.WOULD_INGEST),
         actions=actions,
     )
 

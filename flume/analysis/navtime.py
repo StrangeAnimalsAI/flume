@@ -19,6 +19,9 @@ import statistics
 from collections import defaultdict
 from typing import Any
 
+from flume.sources import ToolClass, get_adapter
+from flume.store.base import require_sql
+
 CYCLE_CAP_S = 300  # gaps past the prompt-cache TTL are user-idle, not work
 
 def classify_tool(
@@ -41,7 +44,6 @@ def _classifier_for(source: str):
     """Resolve (and cache) one source's tool classifier."""
     if source not in _CLASSIFIERS:
         try:
-            from flume.sources import get_adapter
 
             _CLASSIFIERS[source] = get_adapter(source).classify_tool
         except ValueError:
@@ -52,7 +54,9 @@ def _classifier_for(source: str):
 _CLASSIFIERS: dict[str, Any] = {}
 
 
-def _fallback_classify(_name: str | None, args_preview: str | None) -> str:
+def _fallback_classify(
+    _name: str | None, args_preview: str | None
+) -> ToolClass:
     from flume.sources.utils import is_nav_shell
 
     return "navigation" if is_nav_shell(args_preview) else "other"
@@ -70,7 +74,6 @@ def session_nav_shares(
 
     Sessions with fewer than two turns carry no measurable cycles and are
     omitted. `nav_share` is nav seconds / attributed active seconds."""
-    from flume.store.base import require_sql
 
     query = require_sql(store, "session_nav_shares").rows
 

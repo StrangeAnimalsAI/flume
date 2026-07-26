@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 
 from flume.store.base import require_sql
+from flume.store.config import load_toml
 from typing import Any
 
 from flume.analysis.audit import script_clusters
@@ -317,7 +318,6 @@ DEFAULT_INDEX_MARKERS = ("AGENTS.md", "CLAUDE.md", ".cursor/rules", "_docnav")
 
 
 def _index_markers() -> list[str]:
-    from flume.store.config import load_toml
 
     configured = (load_toml().get("insights") or {}).get("index_markers")
     if isinstance(configured, list) and configured:
