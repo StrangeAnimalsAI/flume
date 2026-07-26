@@ -21,6 +21,7 @@ from flume.sources import (
 from flume.store.base import open_analyzed_store
 from flume.store.config import load_policy
 from flume.store.raw import open_raw_store
+from flume.store.retention import run_retention
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,11 +52,6 @@ def _open_stores(args: argparse.Namespace):
 def _apply_retention(args: argparse.Namespace, analyzed_store, raw_store) -> None:
     if not args.apply_retention or analyzed_store is None or raw_store is None:
         return
-    # Only genuinely deferred import in this module: retention machinery
-    # loads solely for --apply-retention. The rest of flume.store is
-    # already imported at module scope via flume.ingest.write.
-    from flume.store.retention import run_retention
-
     report = run_retention(
         store=analyzed_store,
         raw_store=raw_store,
