@@ -21,8 +21,8 @@ DuckDB, a remote API) implements the abstract methods and registers a URL
 scheme.
 
 Content rows are the full-fidelity layer: thinking blocks, complete tool
-arguments/results, and message texts that the OTel/Langfuse path truncates
-or redacts. They reference the same deterministic span ids the mappers
+arguments/results, and message texts that an OTel export path would
+truncate or redact. They reference the same deterministic span ids the mappers
 emit, so the metrics skeleton and the full text always join cleanly.
 """
 from __future__ import annotations
@@ -256,7 +256,7 @@ class AnalyzedStore(ABC):
     ) -> list[dict[str, Any]]:
         """Sessions whose `pipeline_version` is NULL or behind
         `current_version`, newest first — rows built by older mapper/
-        extractor logic that `rebuild --stale` should re-ingest."""
+        extractor logic that `rebuild` should re-ingest."""
 
     @abstractmethod
     def prune_sessions(
@@ -280,7 +280,7 @@ class AnalyzedStore(ABC):
         self.close()
 
 
-class StoreCapabilityError(TypeError):
+class StoreCapabilityError(Exception):
     """Raised when a store cannot do what a caller needs."""
 
 

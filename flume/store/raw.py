@@ -97,7 +97,7 @@ DEFAULT_RAW_STORE_URL = "file://~/.flume/raw"
 def open_raw_store(url: str | None = None) -> RawStore:
     resolved = url or DEFAULT_RAW_STORE_URL
     if resolved.startswith("file://"):
-        return FsRawArchive(resolved[len("file://") :])
+        return FsRawStore(resolved[len("file://") :])
     raise ValueError(f"unsupported raw store url {resolved!r}; expected file://<dir>")
 
 
@@ -150,7 +150,7 @@ def _fs_name(value: str) -> str:
     return safe or "_"
 
 
-class FsRawArchive(RawStore):
+class FsRawStore(RawStore):
     def __init__(self, root: str | Path) -> None:
         self.root = Path(str(root)).expanduser()
         self.blob_root = self.root / "blobs"

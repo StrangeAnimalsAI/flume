@@ -50,8 +50,8 @@ class SqliteIngestStateStore:
     """Tiny sqlite-backed checkpoint store.
 
     Rows are keyed by source type and absolute path. Re-ingest decisions use
-    the content fingerprint, so touching a file without changing bytes does
-    not create duplicate Langfuse writes.
+    the content fingerprint, so touching a file without changing bytes is not
+    re-ingested.
     """
 
     def __init__(self, path: Path | str) -> None:
@@ -291,27 +291,6 @@ class SqliteIngestStateStore:
             )
             """
         )
-        columns = {
-            row["name"]
-            for row in self._conn.execute(
-                "PRAGMA table_info(transcript_ingest_state)"
-            ).fetchall()
-        }
-        if "metadata_json" not in columns:
-            self._conn.execute(
-                """
-                ALTER TABLE transcript_ingest_state
-                ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'
-                """
-            )
-        self._conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS transcript_ingest_state_status_idx
-            ON transcript_ingest_state (status)
-            """
-        )
-        self._conn.commit()
-
 
 def _normal_path(path: Path | str) -> str:
     return str(Path(path).expanduser().resolve(strict=False))

@@ -18,7 +18,7 @@ Span = dict[str, Any]
 
 # Provenance stamp written to every session row. Bump whenever flume/sources/*
 # or this module change what they derive from raw bytes;
-# `flume analyze rebuild --stale` then re-ingests older rows.
+# `flume analyze rebuild` then re-ingests older rows.
 PIPELINE_VERSION = 4
 
 _ARGS_PREVIEW_MAX = 500
@@ -43,8 +43,8 @@ def bundle_from_spans(
 
     # Keyed by span_id: real transcripts can re-log an event with the same
     # uuid (API retries), which yields duplicate deterministic span ids.
-    # Langfuse silently first-write-wins; here the LAST occurrence wins,
-    # matching the re-log being the settled version of the event.
+    # The LAST occurrence wins, matching the re-log being the settled
+    # version of the event.
     turns_by_id: dict[str, dict[str, Any]] = {}
     tools_by_id: dict[str, dict[str, Any]] = {}
     for span in spans:

@@ -260,11 +260,6 @@ def _parser() -> argparse.ArgumentParser:
         "rebuild",
         help="Re-ingest sessions built by an older pipeline (from the raw store).",
     )
-    p.add_argument(
-        "--stale",
-        action="store_true",
-        help="Rebuild sessions whose pipeline_version is behind (required).",
-    )
     p.add_argument("--source")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--dry-run", action="store_true")
@@ -307,8 +302,7 @@ def _parser() -> argparse.ArgumentParser:
         "--version", type=int, default=-1, help="Version index (default: latest)."
     )
     rp.set_defaults(func=_cmd_raw_restore)
-    for rp_parser in (p,):
-        rp_parser.add_argument("--raw-store-url", default=None)
+    p.add_argument("--raw-store-url", default=None)
 
     p = sub.add_parser("retention", help="Show or enforce retention policy.")
     ret_sub = p.add_subparsers(dest="retention_command", required=True)
@@ -317,9 +311,8 @@ def _parser() -> argparse.ArgumentParser:
     rp = ret_sub.add_parser("run", help="Delete expired raw blobs and sessions.")
     rp.add_argument("--dry-run", action="store_true")
     rp.set_defaults(func=_cmd_retention_run)
-    for rp_parser in (p,):
-        rp_parser.add_argument("--raw-store-url", default=None)
-        rp_parser.add_argument("--config", type=Path, default=None)
+    p.add_argument("--raw-store-url", default=None)
+    p.add_argument("--config", type=Path, default=None)
 
     return parser
 
@@ -487,7 +480,7 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
     }[args.group_by]
     clauses: list[str] = []
     params: list[Any] = []
-    if getattr(args, "source", None):
+    if args.source:
         clauses.append("s.source = ?")
         params.append(args.source)
     if since_ns is not None:
@@ -607,8 +600,6 @@ def _cmd_rebuild(store, args) -> dict[str, Any]:
     from flume.ingest.write import rebuild_stale
     from flume.store.raw import open_raw_store
 
-    if not args.stale:
-        raise SystemExit("rebuild requires --stale (the only mode implemented)")
     with open_raw_store(args.raw_store_url) as raw_store:
         return rebuild_stale(
             store,

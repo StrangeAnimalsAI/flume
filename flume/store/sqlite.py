@@ -3,8 +3,8 @@
 One file, no server, FTS5 full-text search over thinking/messages/tool
 payloads when available (falls back to LIKE otherwise). Re-ingesting a
 session deletes and rewrites its rows inside one transaction, so updated
-transcripts actually update — unlike the Langfuse OTel path, which dedupes
-by span id without updating fields (INT-455).
+transcripts actually update rather than being deduped by span id with
+stale fields (INT-455).
 """
 from __future__ import annotations
 
@@ -174,12 +174,9 @@ class SqliteAnalyzedStore(AnalyzedStore):
             os.chmod(db_path, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
-        added = self._migrate_columns()
         self._conn.executescript(_SCHEMA)
         self._ensure_views()
         self._fts = self._init_fts()
-        if added:
-            self._backfill_hierarchy()
 
     def _ensure_views(self) -> None:
         from flume.store.taxonomy import view_sql
@@ -188,77 +185,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
         with self._conn:
             self._conn.execute("DROP VIEW IF EXISTS tool_calls_ext")
             self._conn.execute(view_sql())
-
-    def _migrate_columns(self) -> bool:
-        """ALTER older stores up to the current sessions schema.
-
-        Returns True when hierarchy columns were newly added (the caller
-        then backfills them from existing rows)."""
-        table = self._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
-        ).fetchone()
-        if table is None:
-            return False
-        existing = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(sessions)").fetchall()
-        }
-        hierarchy = {
-            "project": "TEXT",
-            "is_subagent": "INTEGER DEFAULT 0",
-            "parent_session_id": "TEXT",
-        }
-        wanted = {
-            **hierarchy,
-            "raw_sha256": "TEXT",
-            "pipeline_version": "INTEGER",
-            "experiment": "TEXT",
-        }
-        missing = {k: v for k, v in wanted.items() if k not in existing}
-        with self._conn:
-            for column, decl in missing.items():
-                self._conn.execute(
-                    f"ALTER TABLE sessions ADD COLUMN {column} {decl}"
-                )
-        # Backfill only when hierarchy columns were newly added: it
-        # recomputes parent links from paths, which would clobber probe-
-        # derived parents (codex) on an unrelated migration.
-        return bool(missing.keys() & hierarchy.keys())
-
-    def _backfill_hierarchy(self) -> None:
-        from flume.store.bundle import derive_project
-
-        rows = self.rows(
-            "SELECT session_id, source, surface, cwd, file_path FROM sessions"
-        )
-        with self._conn:
-            for row in rows:
-                parent = None
-                subagent = 0
-                path = row["file_path"] or ""
-                parts = path.split("/")
-                if "subagents" in parts:
-                    index = parts.index("subagents")
-                    if index >= 1:
-                        parent = parts[index - 1]
-                        subagent = 1
-                if (
-                    row["surface"] == "subagent"
-                    or str(row["session_id"]).startswith("agent-")
-                ):
-                    subagent = 1
-                self._conn.execute(
-                    """
-                    UPDATE sessions SET project = ?, is_subagent = ?,
-                        parent_session_id = ? WHERE session_id = ?
-                    """,
-                    (
-                        derive_project(row["cwd"]),
-                        subagent,
-                        parent,
-                        row["session_id"],
-                    ),
-                )
 
     def _init_fts(self) -> bool:
         try:
@@ -325,8 +251,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
         totals = self.row(
             """
             SELECT COUNT(*) AS sessions,
-                   COALESCE(SUM(pipeline_version IS NULL
-                                OR pipeline_version < ?), 0) AS stale_sessions,
+                   COALESCE(SUM(pipeline_version < ?), 0) AS stale_sessions,
                    COALESCE(SUM(turn_count), 0) AS turns,
                    COALESCE(SUM(tool_call_count), 0) AS tool_calls,
                    COALESCE(SUM(thinking_blocks), 0) AS thinking_blocks,
@@ -844,7 +769,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
             SELECT session_id, source, file_path, raw_sha256,
                    pipeline_version, metadata
             FROM sessions
-            WHERE pipeline_version IS NULL OR pipeline_version < ?
+            WHERE pipeline_version < ?
         """
         params: list[Any] = [current_version]
         if source:

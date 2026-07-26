@@ -91,7 +91,7 @@ def load_policy(path: Path | None = None) -> RetentionPolicy:
 def parse_duration_ns(value: str) -> int | None:
     """"forever" -> None; "30d"/"12h"/"2w" -> nanoseconds."""
     text = str(value).strip().lower()
-    if text in ("forever", "keep", "infinite", ""):
+    if text in ("forever", ""):
         return _FOREVER
     match = re.fullmatch(r"(\d+)([hdw])", text)
     if not match:

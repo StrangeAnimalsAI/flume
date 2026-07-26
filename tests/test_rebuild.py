@@ -1,7 +1,7 @@
 """Tests for provenance columns and rebuild-from-raw.
 
 The guarantee under test: every analyzed row records which raw bytes
-(sha256) and which pipeline version produced it, and `rebuild --stale`
+(sha256) and which pipeline version produced it, and `rebuild`
 can rebuild rows from the raw raw_store even after the vendor app pruned
 the original transcript.
 """
@@ -77,27 +77,6 @@ def test_stale_sessions_and_overview_count(tmp_path: Path) -> None:
         stale = store.stale_sessions(PIPELINE_VERSION)
         assert [row["session_id"] for row in stale] == ["sess-1"]
         assert store.overview()["totals"]["stale_sessions"] == 1
-
-
-def test_pre_provenance_store_migrates_as_stale(tmp_path: Path) -> None:
-    # A store created before the provenance columns existed: every row is
-    # NULL-versioned, i.e. stale, after the ALTER migration.
-    src = _write_session(tmp_path)
-    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        ingest_path(store, get_adapter("claude-code"), src)
-    conn = sqlite3.connect(f"{tmp_path}/store.sqlite3")
-    with conn:
-        for column in ("raw_sha256", "pipeline_version"):
-            conn.execute(f"ALTER TABLE sessions DROP COLUMN {column}")
-    conn.close()
-
-    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
-        stale = store.stale_sessions(PIPELINE_VERSION)
-        assert [row["session_id"] for row in stale] == ["sess-1"]
-        # Provenance-only migration must not rerun the hierarchy backfill.
-        session = store.get_session("sess-1")
-        assert session is not None
-        assert session["pipeline_version"] is None
 
 
 def test_rebuild_from_original_file(tmp_path: Path) -> None:

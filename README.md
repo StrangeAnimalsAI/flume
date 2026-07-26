@@ -31,7 +31,7 @@ flowchart TB
     end
 
     subgraph sto["flume/store — imports nothing above it"]
-        RAW[("raw archive<br/>gzip · content-hashed")]
+        RAW[("raw store<br/>gzip · content-hashed")]
         DB[("sqlite + FTS5<br/>sessions · turns · tools · contents")]
     end
 
@@ -48,7 +48,7 @@ flowchart TB
     DL --> WR
     WR --> RAW
     WR --> DB
-    RAW -. "rebuild --stale" .-> WR
+    RAW -. "rebuild" .-> WR
     DB --> AN
     DB --> SV
     DB --> IN
@@ -57,13 +57,13 @@ flowchart TB
 Transcripts are archived before they are parsed, so a mapper bug costs a
 rebuild rather than the data. Three layers, each independently rebuildable:
 
-1. **Raw archive** (`~/.flume/raw`) — every ingested transcript
+1. **Raw store** (`~/.flume/raw`) — every ingested transcript
    captured as a gzip blob, content-hash-versioned, *before* parsing. The
    agent apps prune their own transcripts; this doesn't.
 2. **Analyzed store** (`~/.flume/store.sqlite3`) — the relational
    + FTS5 layer: sessions, turns, tool calls, and full-fidelity content
    rows (thinking, messages, untruncated tool I/O). Rebuildable from the
-   raw archive via `analyze rebuild --stale` when the pipeline changes.
+   raw store via `analyze rebuild` when the pipeline changes.
 3. **Declarative retention** (`~/.flume/config.toml`) — per-tier,
    per-source TTLs (default: keep forever):
 
@@ -101,11 +101,11 @@ The package layout mirrors the pipeline, and dependencies point one way
   extraction, and discovery. The only code that knows any vendor's format.
 - `flume/ingest/` — the source-agnostic pipeline: discovery loop, durable
   checkpoints, and the archive-then-persist write path.
-- `flume/store/` — the engine: storage interface, sqlite backend, raw
-  archive, retention. Swappable via `open_store(url)` / `open_archive(url)`;
+- `flume/store/` — the two stores: `RawStore` (original bytes) and
+  `AnalyzedStore` (rows derived from them), plus retention. Swappable via `open_analyzed_store(url)` / `open_raw_store(url)`;
   it never imports the layers above.
 - `flume/analysis/` — insight detectors, experiment comparison, and the
-  `analyze` CLI. Runs on the `SessionStore` interface, plus an explicitly
+  `analyze` CLI. Runs on the `AnalyzedStore` interface, plus an explicitly
   declared `SqlReadable` capability for the detectors that need ad-hoc
   SQL — so a non-SQL backend gets a clear error naming the feature rather
   than a broken query.
@@ -134,7 +134,7 @@ flume analyze cost --since 24h --group-by model   # cache-aware $
 flume analyze search "navigat* codebase" --kind thinking
 flume analyze insights --since 7d      # gap detectors (below)
 flume analyze audit {repeats,bigreads,toolgaps}   # waste queries
-flume analyze rebuild --stale          # re-ingest behind-version rows
+flume analyze rebuild                  # re-ingest behind-version rows
 flume analyze experiment {start,stop,list,compare}   # tag + measure
 flume analyze hooks                    # nudge/denial interventions
 flume analyze review                   # the whole periodic review, no model needed
@@ -172,7 +172,7 @@ spec and wiring.
 
 Every session row records the `raw_sha256` it was built from and a
 `pipeline_version`. Bump `PIPELINE_VERSION` when the mappers/extractors
-change, then `rebuild --stale` re-ingests older rows from the raw archive
+change, then `rebuild` re-ingests older rows from the raw store
 — so improvements to the pipeline retroactively apply to old sessions.
 
 ### Harness (thinking capture)

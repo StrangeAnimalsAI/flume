@@ -77,28 +77,24 @@ _BACKENDS: dict[str, Callable[[], Backend]] = {
     "openai": _openai_backend,
 }
 
-# Names kept working from before backends were pluggable.
-_ALIASES = {"api": "anthropic", "sdk": "claude-sdk"}
-
 
 def names() -> list[str]:
     return sorted(_BACKENDS)
 
 
 def get_backend(name: str) -> Backend:
-    resolved = _ALIASES.get(name, name)
-    factory = _BACKENDS.get(resolved)
+    factory = _BACKENDS.get(name)
     if factory is None:
         raise SystemExit(
             f"unknown backend {name!r}; known: {', '.join(names())}"
         )
-    extra, module = _REQUIREMENTS.get(resolved, (None, None))
+    extra, module = _REQUIREMENTS.get(name, (None, None))
     if module is not None:
         try:
             __import__(module)
         except ImportError:
             raise SystemExit(
-                f"backend {resolved!r} needs the {module!r} package, which is "
+                f"backend {name!r} needs the {module!r} package, which is "
                 f"an optional dependency. Install it with: "
                 f"uv pip install 'flume[{extra}]'"
             ) from None

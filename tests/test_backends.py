@@ -15,13 +15,6 @@ def test_every_backend_resolves_and_describes_itself() -> None:
         assert callable(backend.run)
 
 
-def test_old_flag_values_still_resolve() -> None:
-    # --backend api/sdk predate named backends; breaking them would break
-    # any script or service definition written before the split.
-    assert get_backend("api").name == "anthropic"
-    assert get_backend("sdk").name == "claude-sdk"
-
-
 def test_only_the_sdk_backends_run_async() -> None:
     assert get_backend("claude-sdk").is_async
     assert not get_backend("anthropic").is_async

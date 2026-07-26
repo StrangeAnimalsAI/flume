@@ -311,11 +311,11 @@ def test_retention_deletes_expired_raw_blobs(tmp_path: Path) -> None:
 
 
 def test_archive_capture_sanitizes_hostile_session_ids(tmp_path: Path) -> None:
-    from flume.store.raw import FsRawArchive
+    from flume.store.raw import FsRawStore
 
     src = tmp_path / "t.jsonl"
     src.write_text('{"x": 1}\n')
-    raw_store = FsRawArchive(tmp_path / "raw")
+    raw_store = FsRawStore(tmp_path / "raw")
     entry = raw_store.capture("claude-code", "../../../../tmp/escape", src)
     assert entry is not None
     blob = tmp_path / "raw" / "blobs" / entry.blob_path

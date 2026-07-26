@@ -193,9 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--backend", default="anthropic",
         help="Which model to drive: " + ", ".join(
-            f"{b}" for b in _backend_names()
-        ) + ". 'api' and 'sdk' remain accepted as the old names for "
-        "'anthropic' and 'claude-sdk'.",
+            f"{b}" for b in _backend_names()),
     )
     parser.add_argument(
         "--model", default=None,

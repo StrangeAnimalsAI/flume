@@ -36,8 +36,7 @@ def fake_ingest(request: IngestRequest) -> IngestOutcome:
     """Fixture ingest function.
 
     A JSON object containing `{"fake_ingest_error": true}` forces failure so
-    retry transitions can be tested without touching real transcript sources
-    or Langfuse.
+    retry transitions can be tested without touching real transcript sources.
     """
     for obj in _read_jsonl_objects(request.transcript.path):
         if obj.get("fake_ingest_error") is True:

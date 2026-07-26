@@ -70,8 +70,3 @@ def test_analysis_entry_points_fail_clearly_without_sql(call) -> None:
     """The old failure mode was an AttributeError on a private helper."""
     with pytest.raises(StoreCapabilityError):
         call(_NoSqlStore())
-
-
-def test_capability_error_is_a_typeerror() -> None:
-    # Callers that already catch TypeError (the previous contract) keep working.
-    assert issubclass(StoreCapabilityError, TypeError)
