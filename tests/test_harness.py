@@ -261,3 +261,25 @@ def test_adapter_resolves_and_probes(tmp_path: Path) -> None:
     probed = adapter.probe(path)
     assert probed["cwd"]  # recorded from the run's working directory
     assert probed["version"]
+    # The anthropic backend spawns nothing, so there is no CLI session to link.
+    assert "cli_session_id" not in probed
+
+
+def test_probe_links_the_claude_code_session_the_sdk_spawned(tmp_path: Path) -> None:
+    """The claude-sdk backend spawns Claude Code, which writes its own
+    transcript and is pulled in as a separate session. Probing must surface
+    the id so the two records of one run can be told apart from two runs."""
+    adapter = get_adapter("harness")
+    path = tmp_path / "harness-x.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "session_meta", "session_id": "harness-x",
+            "backend": "sdk", "cwd": "/tmp/x", "harness_version": "1",
+        }) + "\n"
+        + json.dumps({"type": "user", "text": "hi"}) + "\n"
+        + json.dumps({"type": "cli_session", "cli_session_id": "cc-999"}) + "\n"
+    )
+    assert adapter.probe is not None
+    probed = adapter.probe(path)
+    assert probed["cli_session_id"] == "cc-999"
+    assert probed["backend"] == "sdk"

@@ -16,9 +16,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from flume.harness.transcript import ts_ns
 from flume.sources import SourceAdapter
-from flume.sources.common import is_nav_shell, iter_jsonl_lines
+from flume.sources.common import is_nav_shell, iso_ts_ns, iter_jsonl_lines
 from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]
@@ -53,7 +52,7 @@ def harness_to_spans(path: Path) -> list[Span]:
         return []
     meta, session_id = _meta(events, path)
     trace_id = _trace_id(session_id)
-    stamps = [t for t in (ts_ns(e.get("ts")) for e in events) if t is not None]
+    stamps = [t for t in (iso_ts_ns(e.get("ts")) for e in events) if t is not None]
     if not stamps:
         return []
     started, ended = min(stamps), max(stamps)
@@ -82,7 +81,7 @@ def harness_to_spans(path: Path) -> list[Span]:
     for event in events:
         if event.get("type") != "assistant":
             continue
-        end = ts_ns(event.get("ts"))
+        end = iso_ts_ns(event.get("ts"))
         if end is None:
             continue
         duration_ms = int(event.get("duration_ms") or 0)
@@ -121,7 +120,7 @@ def harness_to_spans(path: Path) -> list[Span]:
                 continue
             tool_use_id = block.get("id") or ""
             result = results_by_id.get(tool_use_id, {})
-            tool_end = ts_ns(result.get("ts")) or end
+            tool_end = iso_ts_ns(result.get("ts")) or end
             arguments = json.dumps(block.get("input") or {}, sort_keys=True)
             spans.append({
                 "trace_id": trace_id,
@@ -179,7 +178,7 @@ def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
 
     turn_index = 0
     for event in events:
-        ts = ts_ns(event.get("ts"))
+        ts = iso_ts_ns(event.get("ts"))
         kind = event.get("type")
         if kind == "user":
             add(None, "user_message", (event.get("text") or "").strip(), ts)
@@ -205,24 +204,40 @@ def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
     return rows
 
 
-def probe(path: Path) -> dict[str, Any]:
-    """Cheap pre-parse probe: cwd + harness version from the meta line."""
+def probe(path: Path, *, max_lines: int = 200) -> dict[str, Any]:
+    """Cheap pre-parse probe: cwd + harness version, and the CLI session id
+    when one exists.
+
+    The `claude-sdk` backend drives the Claude Agent SDK, which spawns Claude
+    Code — so that run ALSO writes a transcript into ~/.claude/projects and
+    gets pulled in as a separate `claude-code` session. Two records, one run.
+    The backend already logs the id it spawned; surfacing it here as
+    `cli_session_id` is what makes the pair linkable instead of silent.
+    """
+    out: dict[str, Any] = {}
     try:
         with path.open() as fh:
-            first = fh.readline()
+            for index, line in enumerate(fh):
+                if index >= max_lines or ("cwd" in out and "cli_session_id" in out):
+                    break
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                kind = event.get("type")
+                if kind == "session_meta":
+                    if isinstance(event.get("cwd"), str) and event["cwd"]:
+                        out["cwd"] = event["cwd"]
+                    if isinstance(event.get("harness_version"), str):
+                        out["version"] = event["harness_version"]
+                    if isinstance(event.get("backend"), str):
+                        out["backend"] = event["backend"]
+                elif kind == "cli_session":
+                    cli_id = event.get("cli_session_id")
+                    if isinstance(cli_id, str) and cli_id:
+                        out["cli_session_id"] = cli_id
     except OSError:
-        return {}
-    try:
-        meta = json.loads(first)
-    except json.JSONDecodeError:
-        return {}
-    if meta.get("type") != "session_meta":
-        return {}
-    out: dict[str, Any] = {}
-    if isinstance(meta.get("cwd"), str) and meta["cwd"]:
-        out["cwd"] = meta["cwd"]
-    if isinstance(meta.get("harness_version"), str):
-        out["version"] = meta["harness_version"]
+        return out
     return out
 
 
