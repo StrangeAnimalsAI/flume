@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -603,7 +604,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
         started_at_ns: int | None = None,
         ended_at_ns: int | None = None,
     ) -> dict[str, Any]:
-        import time
 
         now = time.time_ns()
         row = {
@@ -621,7 +621,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
         return row
 
     def end_experiment(self, name: str, ended_at_ns: int | None = None) -> dict[str, Any]:
-        import time
 
         experiment = self.get_experiment(name)
         if experiment is None:
@@ -704,7 +703,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
         return ",".join(matched) if matched else None
 
     def upsert_findings(self, findings: list[dict[str, Any]]) -> None:
-        import time
 
         now = time.time_ns()
         with self._conn:
@@ -745,7 +743,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
             conditions.append("kind = ?")
             params.append(kind)
         if active_within_ns is not None:
-            import time
 
             conditions.append("last_seen_ns >= ?")
             params.append(time.time_ns() - active_within_ns)

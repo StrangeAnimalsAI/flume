@@ -23,11 +23,17 @@ import json
 import re
 import sys
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flume.store.base import CONTENT_KINDS, open_analyzed_store
+from flume.store.base import (
+    CONTENT_KINDS,
+    DEFAULT_ANALYZED_STORE_URL,
+    open_analyzed_store,
+    require_sql,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -405,7 +411,6 @@ def _cmd_hooks(store, args) -> dict[str, Any]:
 
 
 def _require_sqlite(store, feature: str):
-    from flume.store.base import require_sql
 
     return require_sql(store, feature)
 
@@ -468,7 +473,6 @@ def _parse_when(value: str | None) -> int | None:
 def _cmd_cost(store, args) -> list[dict[str, Any]]:
     # Cost is derived, not stored: price per-turn token splits at the turn's
     # own model rates (or --as-model rates for what-if).
-    from flume.store.base import require_sql
 
     require_sql(store, "cost")
     since_ns = _since_ns(args.since)
@@ -613,7 +617,6 @@ def _cmd_rebuild(store, args) -> dict[str, Any]:
 def _cmd_sql(_store, args) -> list[dict[str, Any]]:
     import sqlite3
 
-    from flume.store.base import DEFAULT_ANALYZED_STORE_URL
 
     query = args.query.strip().rstrip(";")
     head = query.split(None, 1)[0].lower() if query else ""
@@ -671,7 +674,6 @@ def _cmd_raw_stats(_store, args) -> list[dict[str, Any]]:
 
 
 def _cmd_raw_versions(_store, args) -> list[dict[str, Any]]:
-    from dataclasses import asdict
 
     from flume.store.raw import open_raw_store
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from flume.store.base import require_sql
 from flume.store.config import load_toml
 
 DEFAULTS: dict[str, Any] = {
@@ -74,7 +75,6 @@ def run_review(
     from flume.analysis.experiments import compare_experiment
     from flume.analysis.hooks import hook_events, hooks_summary
     from flume.analysis.insights import run_insights
-    from flume.store.base import require_sql
 
     require_sql(store, "review")
 

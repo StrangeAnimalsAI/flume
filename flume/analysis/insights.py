@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+from flume.store.base import require_sql
 from typing import Any
 
 from flume.analysis.audit import script_clusters
@@ -57,7 +59,6 @@ def run_insights(
     in the store. Detectors are source-agnostic — the patterns they look
     for (duplicate calls, idle gaps, navigation grind) are properties of
     agentic coding, not of any one vendor."""
-    from flume.store.base import require_sql
 
     # Declared up front: nine of eleven detectors need SQL, so failing on
     # whichever one happens to run first would be an arbitrary error.

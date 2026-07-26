@@ -249,7 +249,6 @@ def main(argv: list[str] | None = None) -> int:
                 "--model is required for the openai backend (e.g. "
                 "--model qwen3-coder)"
             )
-        import os
 
         path = backend.run(
             args.prompt,
