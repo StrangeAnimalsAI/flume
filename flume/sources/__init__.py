@@ -40,13 +40,13 @@ Contract notes:
 
 The registry is data, not code — the same treatment `flume.pricing` gives
 model rates. `_DEFAULTS` below ships the sources flume knows, and each
-entry is just a name, a module path, and an optional vendor; nothing is
-imported until `get_adapter()` resolves to it. A `[sources]` table in
+entry is just a name and a module path; nothing is imported until
+`get_adapter()` resolves to it. A `[sources]` table in
 `~/.flume/config.toml` adds or overrides entries, so a third-party source
 needs no edit to flume:
 
     [sources]
-    "my-agent" = { vendor = "acme", module = "my_pkg.flume_adapter" }
+    "my-agent" = { module = "my_pkg.flume_adapter" }
 
 To add a vendor: write the module, define a module-level `ADAPTER =
 SourceAdapter(...)` in it, and list it in `_DEFAULTS` (or in config). The
@@ -81,13 +81,6 @@ class SourceAdapter:
     name: str  # canonical source name, e.g. "claude-code"
     map_spans: Callable[[Path], list[Span]]
     extract_contents: Callable[[Path, str], list[ContentRow]]
-    # Model vendor, only when the source has a fixed one: Claude Code is
-    # always Anthropic, Codex always OpenAI. None when the vendor is a
-    # per-run property — the harness drives whichever backend it is pointed
-    # at, so a fixed label here is a claim its own sessions contradict.
-    # Nothing computes from this: costing keys on the model string and tool
-    # categorization keys on the source. It is an alias and a label.
-    vendor: str | None = None
     probe: Callable[[Path], dict[str, Any]] | None = None
     classify_tool: Callable[[str | None, str | None], str] | None = None
 
@@ -117,13 +110,12 @@ class TranscriptSource(Protocol):
 class SourceInfo:
     """What the registry knows about a source without importing its module.
 
-    Enough to answer "which sources exist" and "what vendor is this" — the
-    only questions the CLI asks when building `--source` choices — so those
-    paths never pay to import a parser they will not run.
+    Enough to answer "which sources exist" — the only question the CLI asks
+    when building `--source` choices — so that path never pays to import a
+    parser it will not run.
     """
 
     name: str
-    vendor: str | None
     module: str
     # Everything else from the source's config table — discovery roots and
     # whatever else its `make_source` understands. Empty for shipped sources,
@@ -132,12 +124,9 @@ class SourceInfo:
 
 
 _DEFAULTS: dict[str, SourceInfo] = {
-    "claude-code": SourceInfo(
-        "claude-code", "anthropic", "flume.sources.claude_code"
-    ),
-    "codex": SourceInfo("codex", "openai", "flume.sources.codex"),
-    # No vendor: the harness runs whichever backend it is pointed at.
-    "harness": SourceInfo("harness", None, "flume.sources.harness"),
+    "claude-code": SourceInfo("claude-code", "flume.sources.claude_code"),
+    "codex": SourceInfo("codex", "flume.sources.codex"),
+    "harness": SourceInfo("harness", "flume.sources.harness"),
 }
 
 # Merged registry, memoized against the config file's identity + mtime so a
@@ -176,19 +165,15 @@ def _parse_entry(name: str, spec: object) -> SourceInfo:
     if not isinstance(spec, dict):
         raise ValueError(
             f"bad [sources] entry for {name!r}: expected a table with a "
-            "`module` path (and optionally `vendor`)"
+            "`module` path"
         )
     missing = {"module"} - set(spec)
     if missing:
         raise ValueError(
             f"[sources] entry {name!r} is missing {', '.join(sorted(missing))}"
         )
-    options = {k: v for k, v in spec.items() if k not in ("vendor", "module")}
-    vendor = spec.get("vendor")
-    return SourceInfo(
-        name, str(vendor) if vendor is not None else None,
-        str(spec["module"]), options,
-    )
+    options = {k: v for k, v in spec.items() if k != "module"}
+    return SourceInfo(name, str(spec["module"]), options)
 
 
 def registered() -> list[SourceInfo]:
@@ -196,16 +181,16 @@ def registered() -> list[SourceInfo]:
     return sorted(_registry().values(), key=lambda info: info.name)
 
 
-def get_adapter(name_or_vendor: str) -> SourceAdapter:
-    """Resolve an adapter by source name, or by vendor when unambiguous.
+def get_adapter(name: str) -> SourceAdapter:
+    """Resolve an adapter by source name.
 
     Imports the vendor module here and nowhere earlier, so a process that
     touches one source never loads the parsers for the others.
     """
-    return _load(resolve(name_or_vendor))
+    return _load(resolve(name))
 
 
-def get_discovery(name_or_vendor: str, **overrides: Any) -> TranscriptSource:
+def get_discovery(name: str, **overrides: Any) -> TranscriptSource:
     """Build the `TranscriptSource` for a pull-based source.
 
     Options come from the source's config table, with `overrides` (the CLI's
@@ -213,7 +198,7 @@ def get_discovery(name_or_vendor: str, **overrides: Any) -> TranscriptSource:
     source's own default roots. Raises for a push-only source — one whose
     module defines no `make_source`, like the harness.
     """
-    info = resolve(name_or_vendor)
+    info = resolve(name)
     module = _import(info)
     factory = getattr(module, DISCOVERY_ATTR, None)
     if factory is None:
@@ -226,27 +211,12 @@ def get_discovery(name_or_vendor: str, **overrides: Any) -> TranscriptSource:
     return factory(**options)
 
 
-def resolve(name_or_vendor: str) -> SourceInfo:
-    """Registry entry for a source name, or a vendor when unambiguous."""
-    entries = _registry()
-    info = entries.get(name_or_vendor)
+def resolve(name: str) -> SourceInfo:
+    """Registry entry for a source name."""
+    info = _registry().get(name)
     if info is None:
-        by_vendor = [
-            e for e in entries.values()
-            if e.vendor is not None and e.vendor == name_or_vendor
-        ]
-        if len(by_vendor) == 1:
-            info = by_vendor[0]
-        elif len(by_vendor) > 1:
-            names = ", ".join(sorted(e.name for e in by_vendor))
-            raise ValueError(
-                f"vendor {name_or_vendor!r} is ambiguous; use a source name: {names}"
-            )
-        else:
-            known = ", ".join(sorted(entries))
-            raise ValueError(
-                f"unknown source {name_or_vendor!r}; known: {known}"
-            )
+        known = ", ".join(sorted(_registry()))
+        raise ValueError(f"unknown source {name!r}; known: {known}")
     return info
 
 

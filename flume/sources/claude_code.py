@@ -841,7 +841,6 @@ def make_source(roots=None, **_ignored) -> ClaudeCodeTranscriptSource:
 # registry and imports it only when something resolves "claude-code".
 ADAPTER = SourceAdapter(
     name="claude-code",
-    vendor="anthropic",
     map_spans=jsonl_to_spans,
     extract_contents=extract_contents,
     probe=probe,

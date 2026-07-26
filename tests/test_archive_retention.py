@@ -49,70 +49,14 @@ def _write_session(tmp_path: Path, session_id: str = "sess-1", extra: str = "") 
 # -- registry ---------------------------------------------------------------
 
 
-def test_adapter_resolves_by_name_and_vendor() -> None:
-    assert get_adapter("claude-code").vendor == "anthropic"
-    assert get_adapter("openai").name == "codex"
-    # The harness declares no vendor — it runs whichever backend it is
-    # pointed at — so "anthropic" is unambiguous and means Claude Code.
-    assert get_adapter("harness").vendor is None
-    assert get_adapter("anthropic").name == "claude-code"
+def test_adapter_resolves_by_name() -> None:
+    assert get_adapter("claude-code").name == "claude-code"
+    assert get_adapter("codex").name == "codex"
     with pytest.raises(ValueError, match="unknown source"):
         get_adapter("gemini")
-
-
-def test_vendor_alias_is_ambiguous_when_two_sources_share_one(
-    tmp_path, monkeypatch
-) -> None:
-    """Kept from when claude-code and harness both claimed anthropic: a
-    vendor shared by two sources must refuse to guess."""
-    (tmp_path / "rival.py").write_text(
-        "from flume.sources import SourceAdapter\n"
-        "ADAPTER = SourceAdapter(name='rival', vendor='anthropic',\n"
-        "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    cfg = tmp_path / "config.toml"
-    cfg.write_text(
-        '[sources]\n"rival" = { vendor = "anthropic", module = "rival" }\n'
-    )
-    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
-    with pytest.raises(ValueError, match="ambiguous"):
+    # Sources are named, not aliased: a model vendor is not a source.
+    with pytest.raises(ValueError, match="unknown source"):
         get_adapter("anthropic")
-
-
-def test_a_source_may_declare_no_vendor(tmp_path, monkeypatch) -> None:
-    """`vendor` is optional in config too — nothing computes from it."""
-    (tmp_path / "vendorless.py").write_text(
-        "from flume.sources import SourceAdapter\n"
-        "ADAPTER = SourceAdapter(name='vendorless',\n"
-        "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    cfg = tmp_path / "config.toml"
-    cfg.write_text('[sources]\n"vendorless" = { module = "vendorless" }\n')
-    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
-    assert get_adapter("vendorless").vendor is None
-
-
-def test_registry_lists_sources_without_importing_them() -> None:
-    """The point of the lazy registry: naming a source must not load its
-    parser. Run in a clean interpreter, since this process has them all."""
-    import subprocess
-    import sys
-
-    code = (
-        "import sys, flume.sources as s;"
-        "names=[i.name for i in s.registered()];"
-        "loaded=[m for m in sys.modules if m.startswith('flume.sources.')"
-        " and not m.endswith('common')];"
-        "print(sorted(names), sorted(loaded))"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    names, loaded = out.split("] [")
-    assert "claude-code" in names and "codex" in names and "harness" in names
-    assert loaded == "]"  # no vendor module imported
 
 
 def test_config_registers_a_third_party_source(tmp_path, monkeypatch) -> None:
@@ -120,19 +64,17 @@ def test_config_registers_a_third_party_source(tmp_path, monkeypatch) -> None:
     pkg = tmp_path / "acme_adapter.py"
     pkg.write_text(
         "from flume.sources import SourceAdapter\n"
-        "ADAPTER = SourceAdapter(name='my-agent', vendor='acme',\n"
+        "ADAPTER = SourceAdapter(name='my-agent',\n"
         "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     cfg = tmp_path / "config.toml"
     cfg.write_text(
-        '[sources]\n"my-agent" = { vendor = "acme", module = "acme_adapter" }\n'
+        '[sources]\n"my-agent" = { module = "acme_adapter" }\n'
     )
     monkeypatch.setenv("FLUME_CONFIG", str(cfg))
 
-    adapter = get_adapter("my-agent")
-    assert adapter.name == "my-agent" and adapter.vendor == "acme"
-    assert get_adapter("acme").name == "my-agent"  # resolves by vendor too
+    assert get_adapter("my-agent").name == "my-agent"
     from flume.sources import registered
 
     assert "my-agent" in [i.name for i in registered()]
@@ -148,7 +90,7 @@ def test_config_source_is_discoverable_with_its_own_roots(
     (tmp_path / "acme_disc.py").write_text(
         "from pathlib import Path\n"
         "from flume.sources import DiscoveredTranscript, SourceAdapter\n"
-        "ADAPTER = SourceAdapter(name='my-agent', vendor='acme',\n"
+        "ADAPTER = SourceAdapter(name='my-agent',\n"
         "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
         "class _Src:\n"
         "    source_type = 'my-agent'\n"
@@ -169,7 +111,7 @@ def test_config_source_is_discoverable_with_its_own_roots(
 
     cfg = tmp_path / "config.toml"
     cfg.write_text(
-        '[sources]\n"my-agent" = { vendor = "acme", module = "acme_disc", '
+        '[sources]\n"my-agent" = { module = "acme_disc", '
         f'roots = ["{sessions}"] }}\n'
     )
     monkeypatch.setenv("FLUME_CONFIG", str(cfg))
@@ -188,13 +130,13 @@ def test_push_only_source_has_no_discovery() -> None:
 
 def test_config_source_errors_name_the_problem(tmp_path, monkeypatch) -> None:
     cfg = tmp_path / "config.toml"
-    cfg.write_text('[sources]\n"broken" = { vendor = "acme" }\n')
+    cfg.write_text('[sources]\n"broken" = { note = "no module" }\n')
     monkeypatch.setenv("FLUME_CONFIG", str(cfg))
     with pytest.raises(ValueError, match="missing module"):
         get_adapter("broken")
 
     cfg.write_text(
-        '[sources]\n"ghost" = { vendor = "acme", module = "no_such_module_xyz" }\n'
+        '[sources]\n"ghost" = { module = "no_such_module_xyz" }\n'
     )
     with pytest.raises(ValueError, match="failed to import"):
         get_adapter("ghost")
@@ -202,7 +144,7 @@ def test_config_source_errors_name_the_problem(tmp_path, monkeypatch) -> None:
     (tmp_path / "empty_adapter.py").write_text("# no ADAPTER here\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     cfg.write_text(
-        '[sources]\n"empty" = { vendor = "acme", module = "empty_adapter" }\n'
+        '[sources]\n"empty" = { module = "empty_adapter" }\n'
     )
     with pytest.raises(ValueError, match="defines no module-level"):
         get_adapter("empty")
@@ -255,7 +197,7 @@ def test_mapper_failure_still_archives_raw(tmp_path: Path) -> None:
     # Passed straight in: what's under test is the write path's ordering
     # (archive before parse), not how the adapter was looked up.
     adapter = SourceAdapter(
-        name="boom", vendor="test", map_spans=boom,
+        name="boom", map_spans=boom,
         extract_contents=lambda p, s: [],
     )
     src = _write_session(tmp_path, session_id="giant")

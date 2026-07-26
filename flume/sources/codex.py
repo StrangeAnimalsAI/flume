@@ -1007,7 +1007,6 @@ def make_source(
 # registry and imports it only when something resolves "codex".
 ADAPTER = SourceAdapter(
     name="codex",
-    vendor="openai",
     map_spans=rollout_to_spans,
     extract_contents=extract_contents,
     probe=probe,

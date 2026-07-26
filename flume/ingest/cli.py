@@ -98,9 +98,8 @@ def _parser() -> argparse.ArgumentParser:
         "--source",
         required=True,
         help=(
-            "Source adapter to ingest: claude-code, codex, or a vendor "
-            "alias when only one source declares it (openai, anthropic). "
-            "'fake' is a test fixture source and needs --fake-root."
+            "Source adapter to ingest: claude-code or codex. 'fake' is a "
+            "test fixture source and needs --fake-root."
         ),
     )
     parser.add_argument(
@@ -220,7 +219,7 @@ def _source_and_ingest(
     session_store=None,
     archive=None,
 ) -> tuple[TranscriptSource, IngestFunction]:
-    source_name = _canonical_source(args.source)
+    source_name = args.source
     if source_name == "fake":
         if args.fake_root is None:
             parser.error("--fake-root is required for --source fake")
@@ -233,8 +232,8 @@ def _source_and_ingest(
         source = get_discovery(source_name, **_discovery_flags(args, source_name))
         adapter = get_adapter(source_name)
     except ValueError as exc:
-        # Unknown source, ambiguous vendor alias, or a push-only source with
-        # no discovery — the registry's message already says which.
+        # Unknown source, or a push-only source with no discovery —
+        # the registry's message already says which.
         parser.error(str(exc))
 
     return source, store_ingest_function(adapter, session_store, archive)
@@ -253,18 +252,6 @@ def _discovery_flags(args: argparse.Namespace, source_name: str) -> dict:
         return {"roots": args.claude_root}
     return {}
 
-
-def _canonical_source(name: str) -> str:
-    """Vendor aliases resolve through the adapter registry; discovery here
-    still needs the concrete source adapter, so map back to its name."""
-    if name == "fake":
-        return name
-    try:
-        from flume.sources import get_adapter
-
-        return get_adapter(name).name
-    except ValueError:
-        return name
 
 
 def _print_summary(summary: dict[str, object]) -> None:

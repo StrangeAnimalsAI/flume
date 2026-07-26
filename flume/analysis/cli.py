@@ -245,7 +245,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--source",
         required=True,
-        help="Source name (claude-code, codex) or vendor alias (anthropic, openai).",
+        help="Source name: claude-code, codex, harness.",
     )
     p.add_argument("--path", type=Path, required=True, help="File or directory.")
     p.add_argument(
@@ -669,7 +669,7 @@ def _cmd_review(store, args) -> dict[str, Any]:
 def _cmd_sources(store, args) -> list[dict[str, Any]]:
     from flume.sources import registered
 
-    return [{"source": a.name, "vendor": a.vendor} for a in registered()]
+    return [{"source": a.name} for a in registered()]
 
 
 def _cmd_raw_stats(store, args) -> list[dict[str, Any]]:

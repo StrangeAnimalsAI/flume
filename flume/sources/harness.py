@@ -252,7 +252,6 @@ def classify_tool(name: str | None, args_preview: str | None) -> str:
 # registry and imports it only when something resolves "harness".
 ADAPTER = SourceAdapter(
     name="harness",
-    vendor=None,  # set per run by the backend, not by the source
     map_spans=harness_to_spans,
     extract_contents=extract_contents,
     probe=probe,
