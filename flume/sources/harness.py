@@ -27,6 +27,12 @@ from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]
 
+# Transcripts written before the backend registry settled record "sdk".
+# Unlike the CLI aliases removed earlier, this one has data behind it:
+# those files exist on disk and must keep resolving to one name, or the
+# corpus splits across two spellings of the same backend.
+_BACKEND_ALIASES = {"sdk": "claude-sdk"}
+
 
 # Hash namespace for this source's span/trace ids. Stored and joined on,
 # so it is frozen: changing it orphans every existing row.
@@ -231,7 +237,9 @@ def probe(path: Path, *, max_lines: int = 200) -> dict[str, Any]:
                     if isinstance(event.get("harness_version"), str):
                         out["version"] = event["harness_version"]
                     if isinstance(event.get("backend"), str):
-                        out["backend"] = event["backend"]
+                        out["backend"] = _BACKEND_ALIASES.get(
+                            event["backend"], event["backend"]
+                        )
                 elif kind == "cli_session":
                     cli_id = event.get("cli_session_id")
                     if isinstance(cli_id, str) and cli_id:

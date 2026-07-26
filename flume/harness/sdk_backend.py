@@ -105,7 +105,7 @@ async def run_sdk_session(
         log.write({
             "type": "session_meta",
             "session_id": session_id,
-            "backend": "sdk",
+            "backend": "claude-sdk",
             "model": model,
             "cwd": cwd,
             "harness_version": HARNESS_VERSION,

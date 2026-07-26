@@ -282,4 +282,6 @@ def test_probe_links_the_claude_code_session_the_sdk_spawned(tmp_path: Path) -> 
     assert adapter.probe is not None
     probed = adapter.probe(path)
     assert probed["cli_session_id"] == "cc-999"
-    assert probed["backend"] == "sdk"
+    # The fixture records the legacy "sdk"; probe normalises it so the
+    # corpus does not carry two spellings of one backend.
+    assert probed["backend"] == "claude-sdk"
