@@ -58,9 +58,6 @@ def jsonl_to_spans(path: Path) -> list[Span]:
     version: str | None = None
     git_branch: str | None = None
     tool_pending: dict[str, dict[str, Any]] = {}
-    transcript_items: list[dict[str, Any]] = []
-    pending_input_items: list[dict[str, Any]] = []
-    opaque_reasoning_items = 0
     # Track the last-emitted assistant turn span so a `turn_duration` event
     # that follows a cluster of assistant events can retro-attribute its ms
     # to that turn. The native Claude Code logger emits turn_duration AFTER
@@ -92,32 +89,13 @@ def jsonl_to_spans(path: Path) -> list[Span]:
         if t == "system" and ev.get("subtype") == "turn_duration":
             _apply_turn_duration(int(ev.get("durationMs") or 0))
             continue
-        event_items, reasoning_items = _event_transcript_items(ev, ts_ns)
-        opaque_reasoning_items += reasoning_items
         if t == "assistant" and ts_ns is not None:
-            transcript_items.extend(event_items)
-            input_payload = _messages_payload(pending_input_items)
-            output_payload = _messages_payload(event_items)
-            turn = _turn_span(
-                ev,
-                ts_ns,
-                session_id,
-                trace_id,
-                root_span_id,
-                0,
-                input_payload,
-                output_payload,
-            )
+            turn = _turn_span(ev, ts_ns, session_id, trace_id, root_span_id, 0)
             spans.append(turn)
             last_turn = turn
             _register_tool_uses(ev, ts_ns, turn["span_id"], tool_pending)
-            pending_input_items = []
             continue
         if t == "user" and ts_ns is not None:
-            transcript_items.extend(event_items)
-            pending_input_items.extend(
-                item for item in event_items if item.get("direction") == "input"
-            )
             spans.extend(
                 _drain_tool_results(ev, ts_ns, session_id, trace_id, tool_pending)
             )
@@ -127,12 +105,6 @@ def jsonl_to_spans(path: Path) -> list[Span]:
 
     root_start_ns = min([first_ns, *(s["start_unix_nano"] for s in spans)])
     root_end_ns = max([last_ns, *(s["end_unix_nano"] for s in spans)])
-    root_input, root_output = _root_payloads(
-        session_id,
-        transcript_items,
-        opaque_reasoning_items,
-    )
-
     root: Span = {
         "name": "claude_code.interaction",
         "trace_id": trace_id,
@@ -147,8 +119,6 @@ def jsonl_to_spans(path: Path) -> list[Span]:
             "session.agent_version": version,
             "git.branch": git_branch,
         },
-        "input": root_input,
-        "output": root_output,
         "status": "OK",
     }
     return [root, *spans]
@@ -205,8 +175,6 @@ def _turn_span(
     trace_id: str,
     root_span_id: str,
     duration_ms: int,
-    input_payload: dict[str, Any],
-    output_payload: dict[str, Any],
 ) -> Span:
     msg = ev.get("message") or {}
     usage = msg.get("usage") or {}
@@ -245,10 +213,6 @@ def _turn_span(
         },
         "status": "OK",
     }
-    if input_payload:
-        span["input"] = input_payload
-    if output_payload:
-        span["output"] = output_payload
     return span
 
 
@@ -297,7 +261,6 @@ def _drain_tool_results(
         clen = _result_chars(blk.get("content"))
         is_error = bool(blk.get("is_error"))
         arguments = pending["input"]
-        display_output = _tool_result_output(blk.get("content"))
         yield {
             "name": "claude_code.tool",
             "trace_id": trace_id,
@@ -312,12 +275,6 @@ def _drain_tool_results(
                 "tool.is_error": is_error,
                 "tool.result_chars": clen,
             },
-            "input": {
-                "tool_use_id": tid,
-                "name": pending["name"],
-                "arguments": _bounded_json_value(arguments, _TOOL_PAYLOAD_MAX),
-            },
-            "output": _truncate_text(display_output, _TOOL_PAYLOAD_MAX),
             "status": "ERROR" if is_error else "OK",
         }
 
@@ -332,262 +289,11 @@ def _result_chars(content: Any) -> int:
     return 0
 
 
-def _event_transcript_items(
-    ev: dict[str, Any],
-    ts_ns: int | None,
-) -> tuple[list[dict[str, Any]], int]:
-    msg = ev.get("message")
-    if not isinstance(msg, dict):
-        return [], 0
-    content = msg.get("content")
-    event_type = ev.get("type")
-    if event_type == "user":
-        return _user_transcript_items(content, ts_ns), 0
-    if event_type == "assistant":
-        return _assistant_transcript_items(content, ts_ns)
-    return [], 0
-
-
-def _user_transcript_items(content: Any, ts_ns: int | None) -> list[dict[str, Any]]:
-    if isinstance(content, str):
-        text = content.strip()
-        return [_message_item(ts_ns, "user", text, "claude_code.user")] if text else []
-    if not isinstance(content, list):
-        return []
-
-    items: list[dict[str, Any]] = []
-    for block in content:
-        if isinstance(block, str):
-            text = block.strip()
-            if text:
-                items.append(_message_item(ts_ns, "user", text, "claude_code.user"))
-            continue
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "tool_result":
-            tool_use_id = block.get("tool_use_id")
-            if not isinstance(tool_use_id, str):
-                continue
-            items.append(
-                {
-                    "ts_ns": ts_ns,
-                    "direction": "input",
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "is_error": bool(block.get("is_error")),
-                    "output": _truncate_text(
-                        _tool_result_output(block.get("content")),
-                        _TOOL_PAYLOAD_MAX,
-                    ),
-                }
-            )
-            continue
-        text = _content_text([block]).strip()
-        if text:
-            items.append(_message_item(ts_ns, "user", text, "claude_code.user"))
-    return items
-
-
-def _assistant_transcript_items(
-    content: Any,
-    ts_ns: int | None,
-) -> tuple[list[dict[str, Any]], int]:
-    if isinstance(content, str):
-        text = content.strip()
-        return (
-            [_message_item(ts_ns, "assistant", text, "claude_code.assistant")]
-            if text
-            else []
-        ), 0
-    if not isinstance(content, list):
-        return [], 0
-
-    items: list[dict[str, Any]] = []
-    opaque_reasoning_items = 0
-    for block in content:
-        if isinstance(block, str):
-            text = block.strip()
-            if text:
-                items.append(
-                    _message_item(ts_ns, "assistant", text, "claude_code.assistant")
-                )
-            continue
-        if not isinstance(block, dict):
-            continue
-
-        block_type = block.get("type")
-        if block_type in {"thinking", "reasoning", "redacted_thinking"}:
-            opaque_reasoning_items += 1
-            continue
-        if block_type == "tool_use":
-            tool_use_id = block.get("id")
-            name = block.get("name")
-            if not isinstance(tool_use_id, str) or not isinstance(name, str):
-                continue
-            items.append(
-                {
-                    "ts_ns": ts_ns,
-                    "direction": "output",
-                    "type": "tool_call",
-                    "tool_use_id": tool_use_id,
-                    "name": name,
-                    "arguments": _bounded_json_value(
-                        block.get("input") or {},
-                        _TOOL_PAYLOAD_MAX,
-                    ),
-                }
-            )
-            continue
-
-        text = _content_text([block]).strip()
-        if text:
-            items.append(
-                _message_item(ts_ns, "assistant", text, "claude_code.assistant")
-            )
-    return items, opaque_reasoning_items
-
-
-def _message_item(
-    ts_ns: int | None,
-    role: str,
-    text: str,
-    source: str,
-) -> dict[str, Any]:
-    return {
-        "ts_ns": ts_ns,
-        "direction": "input" if role == "user" else "output",
-        "type": "message",
-        "role": role,
-        "source": source,
-        "content": _truncate_text(text, _TRANSCRIPT_ITEM_MAX),
-    }
-
-
-def _messages_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
-    messages = [_strip_internal(item) for item in items]
-    return {"messages": messages} if messages else {}
-
-
-def _root_payloads(
-    session_id: str,
-    items: list[dict[str, Any]],
-    opaque_reasoning_items: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    user_requests = [
-        _strip_internal(item)
-        for item in items
-        if item["type"] == "message" and item["role"] == "user"
-    ]
-    assistant_messages = [
-        _strip_internal(item)
-        for item in items
-        if item["type"] == "message" and item["role"] == "assistant"
-    ]
-    tool_calls = [item for item in items if item["type"] == "tool_call"]
-    tool_results = [item for item in items if item["type"] == "tool_result"]
-
-    root_input: dict[str, Any] = {
-        "counts": {"user_requests": len(user_requests)},
-        "session_id": session_id,
-        "user_requests": _bounded_items(user_requests),
-    }
-    root_output: dict[str, Any] = {
-        "counts": {
-            "assistant_messages": len(assistant_messages),
-            "tool_calls": len(tool_calls),
-            "tool_outputs": len(tool_results),
-            "opaque_reasoning_items": opaque_reasoning_items,
-        },
-        "session_id": session_id,
-        "assistant_messages": _bounded_items(assistant_messages),
-    }
-    return root_input, root_output
-
-
-def _bounded_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    kept = [_root_preview_item(item) for item in items[:_ROOT_TRANSCRIPT_ITEMS_MAX]]
-    if len(items) <= _ROOT_TRANSCRIPT_ITEMS_MAX:
-        return kept
-    kept.append(
-        {
-            "type": "truncation_notice",
-            "omitted_items": len(items) - _ROOT_TRANSCRIPT_ITEMS_MAX,
-        }
-    )
-    return kept
-
-
-def _root_preview_item(item: dict[str, Any]) -> dict[str, Any]:
-    preview = dict(item)
-    for key in ("content", "output"):
-        value = preview.get(key)
-        if isinstance(value, str) and len(value) > _ROOT_TRANSCRIPT_PREVIEW_MAX:
-            preview[key] = _truncate_text(value, _ROOT_TRANSCRIPT_PREVIEW_MAX)
-    return preview
-
-
-def _strip_internal(item: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in item.items() if k not in {"direction", "ts_ns"}}
-
-
-def _content_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for block in content:
-        if isinstance(block, str):
-            parts.append(block)
-            continue
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") in {"thinking", "reasoning", "redacted_thinking"}:
-            continue
-        for key in ("text", "content", "input_text", "output_text"):
-            value = block.get(key)
-            if isinstance(value, str) and value:
-                parts.append(value)
-                break
-    return "\n".join(parts)
-
-
-def _tool_result_output(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    text = _content_text(content)
-    if text:
-        return text
-    if isinstance(content, (list, dict)):
-        return _json_text(content)
-    return ""
-
-
-def _bounded_json_value(value: Any, max_chars: int) -> Any:
-    encoded = _json_text(value)
-    if len(encoded) <= max_chars:
-        try:
-            return json.loads(encoded)
-        except json.JSONDecodeError:
-            return encoded
-    return {
-        "truncated": True,
-        "truncated_chars": len(encoded) - max_chars,
-        "value": encoded[:max_chars],
-    }
-
-
 def _json_text(value: Any) -> str:
     try:
         return json.dumps(value, sort_keys=True)
     except (TypeError, ValueError):
         return str(value)
-
-
-def _truncate_text(value: str, max_chars: int) -> str:
-    if len(value) <= max_chars:
-        return value
-    return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
 
 
 # ---------------------------------------------------------------------------

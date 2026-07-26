@@ -118,14 +118,6 @@ def test_root_span_covers_whole_session(tmp_path: Path) -> None:
     assert root["attributes"]["session.agent_version"] == "2.1.114"
     assert root["attributes"]["git.branch"] == "main"
     assert root["attributes"]["source"] == "claude-code"
-    assert root["input"]["user_requests"][0]["content"] == "please inspect /tmp/a.py"
-    assert root["output"]["counts"] == {
-        "assistant_messages": 2,
-        "tool_calls": 1,
-        "tool_outputs": 1,
-        "opaque_reasoning_items": 1,
-    }
-    assert root["output"]["assistant_messages"][0]["content"] == "hello world"
     # Root covers the retroactively shifted first turn and the session tail.
     assert root["start_unix_nano"] < root["end_unix_nano"]
 
@@ -177,25 +169,8 @@ def test_turn_span_carries_usage_and_duration(tmp_path: Path) -> None:
     assert attrs["turn.thinking_chars"] == len("abcdef")
     assert attrs["turn.text_chars"] == len("hello world")
     assert attrs["turn.duration_ms"] == 1500
-    assert first["input"]["messages"][0]["content"] == "please inspect /tmp/a.py"
-    assert any(
-        item["type"] == "message" and item["content"] == "hello world"
-        for item in first["output"]["messages"]
-    )
-    assert any(
-        item["type"] == "tool_call" and item["name"] == "Read"
-        for item in first["output"]["messages"]
-    )
-    assert "abcdef" not in json.dumps(first["output"])
     # start = end - duration
     assert first["end_unix_nano"] - first["start_unix_nano"] == 1500 * 1_000_000
-
-    second = turns[1]
-    assert any(
-        item["type"] == "tool_result" and "x" * 100 in item["output"]
-        for item in second["input"]["messages"]
-    )
-    assert second["output"]["messages"][0]["content"] == "done"
 
 
 def test_tool_span_is_nested_under_turn_with_timing_and_result_chars(
@@ -217,50 +192,6 @@ def test_tool_span_is_nested_under_turn_with_timing_and_result_chars(
     # 2000 ms between tool_use (on assistant event) and tool_result.
     assert tool["attributes"]["tool.duration_ms"] == 2000
     assert "/tmp/a.py" in tool["attributes"]["tool.arguments"]
-    assert tool["input"] == {
-        "tool_use_id": "tu_1",
-        "name": "Read",
-        "arguments": {"file_path": "/tmp/a.py"},
-    }
-    assert tool["output"] == "x" * 1024
-
-
-def test_root_payload_stays_summary_sized_for_large_transcripts(
-    tmp_path: Path,
-) -> None:
-    events = [
-        {
-            "type": "user",
-            "uuid": "user-large",
-            "timestamp": "2026-04-20T10:00:00.000Z",
-            "message": {"role": "user", "content": "summarize"},
-        }
-    ]
-    events.extend(
-        {
-            "type": "assistant",
-            "uuid": f"asst-{i}",
-            "timestamp": f"2026-04-20T10:00:00.{100 + i:03d}Z",
-            "message": {
-                "usage": {"input_tokens": 1, "output_tokens": 1},
-                "content": [{"type": "text", "text": f"chunk {i} " + ("x" * 5_000)}],
-            },
-        }
-        for i in range(80)
-    )
-    path = tmp_path / "large.jsonl"
-    _write_jsonl(path, events)
-
-    root = jsonl_to_spans(path)[0]
-    root_output = root["output"]
-
-    assert root_output["counts"]["assistant_messages"] == 80
-    assert len(root_output["assistant_messages"]) == 51
-    assert root_output["assistant_messages"][-1] == {
-        "type": "truncation_notice",
-        "omitted_items": 30,
-    }
-    assert len(json.dumps(root_output)) < 60_000
 
 
 def test_error_tool_result_marks_span_status(tmp_path: Path) -> None:
