@@ -193,9 +193,9 @@ def test_claude_code_dry_run_reports_mtime_fingerprint_metadata_and_reason(
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=lambda _request: IngestOutcome(),
+            ingester=lambda _request: IngestOutcome(),
             quiet_seconds=5,
             dry_run=True,
             now=NOW,
@@ -223,9 +223,9 @@ def test_claude_code_active_file_is_not_ingested_by_default(tmp_path: Path) -> N
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=lambda request: calls.append(request) or IngestOutcome(),
+            ingester=lambda request: calls.append(request) or IngestOutcome(),
             quiet_seconds=10,
             now=NOW,
         )
@@ -250,16 +250,16 @@ def test_claude_code_run_once_ingests_then_skips_unchanged(tmp_path: Path) -> No
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         first = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW,
         )
         second = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             dry_run=True,
             now=NOW + 1,
@@ -289,17 +289,17 @@ def test_run_once_marks_no_session_transcripts_empty_then_retries_on_change(
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         first = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=empty_ingest,
+            ingester=empty_ingest,
             quiet_seconds=5,
             now=NOW,
         )
         # Unchanged bytes: skipped, still EMPTY, not retried every pass.
         second = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=empty_ingest,
+            ingester=empty_ingest,
             quiet_seconds=5,
             now=NOW + 1,
         )
@@ -308,9 +308,9 @@ def test_run_once_marks_no_session_transcripts_empty_then_retries_on_change(
         _write_jsonl(transcript, _claude_events("session-empty"))
         _age(transcript, seconds=20, now=NOW + 2)
         third = run_once(
-            source=ClaudeCodeTranscriptSource([transcript]),
+            transcripts=ClaudeCodeTranscriptSource([transcript]),
             store=store,
-            ingest=empty_ingest,
+            ingester=empty_ingest,
             quiet_seconds=5,
             now=NOW + 2,
         )
@@ -349,9 +349,9 @@ def test_run_once_skips_files_that_vanish_between_discovery_and_stat(
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=GhostSource(),
+            transcripts=GhostSource(),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW,
         )

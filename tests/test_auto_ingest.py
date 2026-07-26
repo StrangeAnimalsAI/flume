@@ -63,9 +63,9 @@ def test_dry_run_reports_pending_without_state_or_ingest(tmp_path: Path) -> None
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=lambda request: calls.append(request) or IngestOutcome(),
+            ingester=lambda request: calls.append(request) or IngestOutcome(),
             quiet_seconds=5,
             dry_run=True,
             now=NOW,
@@ -89,16 +89,16 @@ def test_quiet_file_ingests_once_then_skips_unchanged(tmp_path: Path) -> None:
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         first = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW,
         )
         second = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW + 1,
         )
@@ -125,9 +125,9 @@ def test_active_file_is_checkpointed_then_ingested_after_quiet(
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         active = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=lambda request: calls.append(request) or IngestOutcome(),
+            ingester=lambda request: calls.append(request) or IngestOutcome(),
             quiet_seconds=10,
             now=NOW,
         )
@@ -135,9 +135,9 @@ def test_active_file_is_checkpointed_then_ingested_after_quiet(
 
         _age(transcript, seconds=30)
         quiet = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=lambda request: calls.append(request) or IngestOutcome(),
+            ingester=lambda request: calls.append(request) or IngestOutcome(),
             quiet_seconds=10,
             now=NOW,
         )
@@ -168,17 +168,17 @@ def test_failure_is_persisted_and_retried(tmp_path: Path) -> None:
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         failed = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=flaky,
+            ingester=flaky,
             quiet_seconds=5,
             now=NOW,
         )
         failed_record = store.get("fake", transcript)
         retried = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=flaky,
+            ingester=flaky,
             quiet_seconds=5,
             now=NOW + 1,
         )
@@ -208,9 +208,9 @@ def test_changed_file_reingests_after_success(tmp_path: Path) -> None:
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW,
         )
@@ -218,9 +218,9 @@ def test_changed_file_reingests_after_success(tmp_path: Path) -> None:
         _write_jsonl(transcript, [{"session_id": "s1"}, {"event": "new"}])
         _age(transcript, seconds=20)
         changed = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW + 1,
         )
@@ -240,9 +240,9 @@ def test_fake_ingest_can_mark_fixture_failure(tmp_path: Path) -> None:
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=FakeTranscriptSource(transcript.parent),
+            transcripts=FakeTranscriptSource(transcript.parent),
             store=store,
-            ingest=fake_ingest,
+            ingester=fake_ingest,
             quiet_seconds=5,
             now=NOW,
         )

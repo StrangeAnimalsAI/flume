@@ -170,9 +170,9 @@ def test_codex_dry_run_reports_mtime_fingerprint_metadata_and_reason(
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=CodexRolloutSource([rollout]),
+            transcripts=CodexRolloutSource([rollout]),
             store=store,
-            ingest=lambda _request: IngestOutcome(),
+            ingester=lambda _request: IngestOutcome(),
             quiet_seconds=5,
             dry_run=True,
             now=NOW,
@@ -199,9 +199,9 @@ def test_codex_active_file_is_not_ingested_by_default(tmp_path: Path) -> None:
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         summary = run_once(
-            source=CodexRolloutSource([rollout]),
+            transcripts=CodexRolloutSource([rollout]),
             store=store,
-            ingest=lambda request: calls.append(request) or IngestOutcome(),
+            ingester=lambda request: calls.append(request) or IngestOutcome(),
             quiet_seconds=10,
             now=NOW,
         )
@@ -226,16 +226,16 @@ def test_codex_run_once_ingests_then_skips_unchanged(tmp_path: Path) -> None:
 
     with SqliteIngestStateStore(tmp_path / "state.sqlite3") as store:
         first = run_once(
-            source=CodexRolloutSource([rollout]),
+            transcripts=CodexRolloutSource([rollout]),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             now=NOW,
         )
         second = run_once(
-            source=CodexRolloutSource([rollout]),
+            transcripts=CodexRolloutSource([rollout]),
             store=store,
-            ingest=ingest,
+            ingester=ingest,
             quiet_seconds=5,
             dry_run=True,
             now=NOW + 1,

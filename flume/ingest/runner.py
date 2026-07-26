@@ -93,9 +93,9 @@ class IngestCycleSummary:
 
 def run_once(
     *,
-    source: TranscriptSource,
+    transcripts: TranscriptSource,
     store: SqliteIngestStateStore,
-    ingest: IngestFunction,
+    ingester: IngestFunction,
     quiet_seconds: float,
     dry_run: bool = False,
     now: float | None = None,
@@ -104,7 +104,7 @@ def run_once(
     current = time.time() if now is None else now
     actions: list[IngestAction] = []
 
-    for transcript in source.discover():
+    for transcript in transcripts.discover():
         try:
             fingerprint = fingerprint_file(transcript.path)
         except OSError as exc:
@@ -202,7 +202,7 @@ def run_once(
         ingesting = store.mark_ingesting(record, now=current)
         request = IngestRequest(transcript=transcript, fingerprint=fingerprint)
         try:
-            outcome = ingest(request)
+            outcome = ingester(request)
         except Exception as exc:  # noqa: BLE001 - persisted for retry visibility.
             error = f"{type(exc).__name__}: {exc}"
             store.mark_failed(ingesting, now=current, error=error)
@@ -268,7 +268,7 @@ def run_once(
             )
         )
 
-    return _summarize(source.source_type, dry_run, actions)
+    return _summarize(transcripts.source_type, dry_run, actions)
 
 
 def _summarize(

@@ -6,14 +6,21 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
-from flume.sources import TranscriptSource, registered
-from flume.store.raw import open_raw_store
+from flume.ingest.write import store_ingest_function
+from flume.sources import (
+    TranscriptSource,
+    get_adapter,
+    get_discovery,
+    registered,
+)
 from flume.store.base import open_analyzed_store
 from flume.store.config import load_policy
+from flume.store.raw import open_raw_store
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,14 +28,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.state_db is None:
         args.state_db = Path.home() / ".flume" / "auto-ingest-state.sqlite3"
-    # Dry runs must not create the store, raw_store, or their directories;
+    # Dry runs must not create either store or their directories;
     # the runner never invokes the ingest function under --dry-run.
     analyzed_store, raw_store = (
         (None, None) if args.dry_run else _open_stores(args)
     )
     try:
-        source, ingest = _source_and_ingest(args, parser, analyzed_store, raw_store)
-        return _run(args, source, ingest, analyzed_store, raw_store)
+        plan = _ingest_plan(args, parser, analyzed_store, raw_store)
+        return _run(args, plan, analyzed_store, raw_store)
     finally:
         if analyzed_store is not None:
             analyzed_store.close()
@@ -59,7 +66,7 @@ def _apply_retention(args: argparse.Namespace, analyzed_store, raw_store) -> Non
     _print_summary({"retention": report})
 
 
-def _run(args: argparse.Namespace, source, ingest, analyzed_store, raw_store) -> int:
+def _run(args: argparse.Namespace, plan, analyzed_store, raw_store) -> int:
     state_db = args.state_db
     if args.dry_run and not Path(state_db).exists():
         # Nothing to read and nothing may be written: stay off disk.
@@ -68,9 +75,9 @@ def _run(args: argparse.Namespace, source, ingest, analyzed_store, raw_store) ->
         if args.loop:
             while True:
                 summary = run_once(
-                    source=source,
+                    transcripts=plan.transcripts,
                     store=store,
-                    ingest=ingest,
+                    ingester=plan.ingester,
                     quiet_seconds=args.quiet_seconds,
                     dry_run=args.dry_run,
                 )
@@ -79,9 +86,9 @@ def _run(args: argparse.Namespace, source, ingest, analyzed_store, raw_store) ->
                 time.sleep(args.interval_seconds)
 
         summary = run_once(
-            source=source,
+            transcripts=plan.transcripts,
             store=store,
-            ingest=ingest,
+            ingester=plan.ingester,
             quiet_seconds=args.quiet_seconds,
             dry_run=args.dry_run,
         )
@@ -205,30 +212,42 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _source_and_ingest(
+class IngestPlan(NamedTuple):
+    """What one pass needs: where transcripts are, and what to do with each.
+
+    Kept as two fields rather than one object because they answer different
+    questions — `transcripts` knows where files come FROM, `ingester` knows
+    where rows go TO. Fusing them would give every source a store handle and
+    close the seam the runner tests inject through.
+    """
+
+    transcripts: TranscriptSource
+    ingester: IngestFunction
+
+
+def _ingest_plan(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
     analyzed_store=None,
     raw_store=None,
-) -> tuple[TranscriptSource, IngestFunction]:
+) -> IngestPlan:
     source_name = args.source
     if source_name == "fake":
         if args.fake_root is None:
             parser.error("--fake-root is required for --source fake")
-        return FakeTranscriptSource(args.fake_root), fake_ingest
-
-    from flume.ingest.write import store_ingest_function
-    from flume.sources import get_adapter, get_discovery
+        return IngestPlan(FakeTranscriptSource(args.fake_root), fake_ingest)
 
     try:
-        source = get_discovery(source_name, **_discovery_flags(args, source_name))
+        transcripts = get_discovery(source_name, **_discovery_flags(args, source_name))
         adapter = get_adapter(source_name)
     except ValueError as exc:
         # Unknown source, or a push-only source with no discovery —
         # the registry's message already says which.
         parser.error(str(exc))
 
-    return source, store_ingest_function(adapter, analyzed_store, raw_store)
+    return IngestPlan(
+        transcripts, store_ingest_function(adapter, analyzed_store, raw_store)
+    )
 
 
 def _discovery_flags(args: argparse.Namespace, source_name: str) -> dict:
