@@ -53,7 +53,7 @@ _CLASSIFIERS: dict[str, Any] = {}
 
 
 def _fallback_classify(name: str | None, args_preview: str | None) -> str:
-    from flume.sources.common import is_nav_shell
+    from flume.sources.utils import is_nav_shell
 
     return "navigation" if is_nav_shell(args_preview) else "other"
 

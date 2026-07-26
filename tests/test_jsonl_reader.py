@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from flume.sources.common import iter_jsonl_lines, read_jsonl
+from flume.sources.utils import iter_jsonl_lines, read_jsonl
 
 
 def _write(path: Path, lines: list[str]) -> Path:

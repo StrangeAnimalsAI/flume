@@ -274,6 +274,25 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("sources", help="List registered source adapters.")
     p.set_defaults(func=_cmd_sources)
 
+    p = sub.add_parser(
+        "review",
+        help="Assemble the periodic efficiency review (defaults from [review]).",
+        description=(
+            "Everything a periodic review needs, gathered without a model: new "
+            "findings, recurring findings whose metric grew, active-experiment "
+            "scoreboard, hook compliance. Pipe --json to whichever agent your "
+            "scheduler runs."
+        ),
+    )
+    p.add_argument("--since", default=None, help="Window (default: [review].since).")
+    p.add_argument("--severity-max", type=int, default=None)
+    p.add_argument("--growth", type=float, default=None,
+                   help="Flag recurring findings whose metric grew by this fraction.")
+    p.add_argument("--baseline-days", type=int, default=None)
+    p.add_argument("--min-sessions", type=int, default=None)
+    p.add_argument("--source", default=None)
+    p.set_defaults(func=_cmd_review)
+
     p = sub.add_parser("raw", help="Raw archive: stats, versions, restore.")
     raw_sub = p.add_subparsers(dest="raw_command", required=True)
     rp = raw_sub.add_parser("stats", help="Per-source blob counts and sizes.")
@@ -625,6 +644,26 @@ def _cmd_sql(store, args) -> list[dict[str, Any]]:
     finally:
         conn.close()
     return rows[: args.limit]
+
+
+def _cmd_review(store, args) -> dict[str, Any]:
+    """CLI flags win; anything unset falls back to `[review]` in config."""
+    from flume.analysis.review import load_review_config, run_review
+
+    settings = load_review_config()
+
+    def pick(flag, key, cast):
+        return cast(settings[key]) if flag is None else flag
+
+    return run_review(
+        store,
+        since_ns=_since_ns(pick(args.since, "since", str)),
+        severity_max=pick(args.severity_max, "severity_max", int),
+        growth=pick(args.growth, "growth", float),
+        baseline_days=pick(args.baseline_days, "baseline_days", int),
+        min_sessions=pick(args.min_sessions, "min_sessions", int),
+        source=args.source,
+    )
 
 
 def _cmd_sources(store, args) -> list[dict[str, Any]]:

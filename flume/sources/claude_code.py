@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.sources import DiscoveredTranscript, SourceAdapter
-from flume.sources.common import (
+from flume.sources.utils import (
     as_string,
     is_nav_shell,
     iso_ts_ns,

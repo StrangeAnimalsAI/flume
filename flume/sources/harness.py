@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.sources import SourceAdapter
-from flume.sources.common import is_nav_shell, iso_ts_ns, iter_jsonl_lines
+from flume.sources.utils import is_nav_shell, iso_ts_ns, iter_jsonl_lines
 from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]

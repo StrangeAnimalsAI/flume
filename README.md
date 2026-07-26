@@ -137,6 +137,7 @@ flume analyze audit {repeats,bigreads,toolgaps}   # waste queries
 flume analyze rebuild --stale          # re-ingest behind-version rows
 flume analyze experiment {start,stop,list,compare}   # tag + measure
 flume analyze hooks                    # nudge/denial interventions
+flume analyze review                   # the whole periodic review, no model needed
 ```
 
 ### Insights
@@ -151,6 +152,21 @@ Detectors are source- and vendor-agnostic: they find agentic-coding
 pathologies (duplicate calls, idle-gap cache churn, navigation grind),
 not Claude-specific ones. `analyze insights --source X` scopes to one
 source; the default covers all of them.
+
+### Periodic review
+
+`analyze review` assembles a whole scheduled review in one command — new
+findings, recurring findings whose metric grew, the active-experiment
+scoreboard, hook compliance — with no model involved. Only the write-up
+needs an agent, so the same JSON drives a Claude Code scheduled task, a
+Codex automation, or a cron job piping into any agent CLI. flume schedules
+nothing and has no opinion about which agent writes it up.
+
+Thresholds live in `[review]` in `~/.flume/config.toml` (window, severity
+cut-off, growth threshold, experiment baseline, the session count below
+which an arm is directional only); every one has a CLI flag that overrides
+it. See [docs/periodic-review.md](docs/periodic-review.md) for the report
+spec and wiring.
 
 ### Provenance & rebuild
 
