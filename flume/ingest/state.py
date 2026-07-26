@@ -8,10 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from flume.ingest.fingerprint import FileFingerprint
 from flume.sources import DiscoveredTranscript
+
+
+_IN_MEMORY = ":memory:"
 
 
 class IngestStatus(StrEnum):
@@ -46,6 +49,48 @@ class IngestRecord:
     updated_at: str
 
 
+@runtime_checkable
+class IngestStateStore(Protocol):
+    """Checkpoints for the ingest loop: what has been seen, and how it went.
+
+    The runner is written against this, not against sqlite. Nothing else
+    implements it today and nothing needs to — the point is that the
+    pipeline layer should not name a database engine, the way it does not
+    name one for the raw or analyzed stores.
+    """
+
+    def get(self, source_type: str, path: Path | str) -> IngestRecord | None: ...
+
+    def observe(
+        self,
+        transcript: DiscoveredTranscript,
+        fingerprint: FileFingerprint,
+        *,
+        now: float,
+    ) -> IngestRecord: ...
+
+    def mark_active(
+        self, record: IngestRecord, *, now: float, reason: str
+    ) -> IngestRecord: ...
+
+    def mark_empty(self, record: IngestRecord, *, now: float) -> IngestRecord: ...
+
+    def mark_ingesting(self, record: IngestRecord, *, now: float) -> IngestRecord: ...
+
+    def mark_ingested(
+        self,
+        record: IngestRecord,
+        *,
+        now: float,
+        session_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> IngestRecord: ...
+
+    def mark_failed(
+        self, record: IngestRecord, *, now: float, error: str
+    ) -> IngestRecord: ...
+
+
 class SqliteIngestStateStore:
     """Tiny sqlite-backed checkpoint store.
 
@@ -54,16 +99,25 @@ class SqliteIngestStateStore:
     re-ingested.
     """
 
+    @classmethod
+    def ephemeral(cls) -> "SqliteIngestStateStore":
+        """A state store that never touches disk.
+
+        Dry runs need somewhere to read checkpoints from without creating
+        a database. That is a real need; spelling it `":memory:"` at the
+        call site leaked a sqlite detail into the CLI."""
+        return cls(_IN_MEMORY)
+
     def __init__(self, path: Path | str) -> None:
-        if str(path) == ":memory:":
-            self.path = Path(":memory:")
-            sqlite_path = ":memory:"
+        if str(path) == _IN_MEMORY:
+            self.path = Path(_IN_MEMORY)
+            sqlite_path = _IN_MEMORY
         else:
             self.path = Path(path).expanduser().resolve(strict=False)
             self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             sqlite_path = str(self.path)
         self._conn = sqlite3.connect(sqlite_path)
-        if sqlite_path != ":memory:":
+        if sqlite_path != _IN_MEMORY:
             os.chmod(sqlite_path, 0o600)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()

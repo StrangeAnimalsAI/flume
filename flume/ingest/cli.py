@@ -63,11 +63,14 @@ def _apply_retention(args: argparse.Namespace, analyzed_store, raw_store) -> Non
 
 
 def _run(args: argparse.Namespace, plan, analyzed_store, raw_store) -> int:
-    state_db = args.state_db
-    if args.dry_run and not Path(state_db).exists():
-        # Nothing to read and nothing may be written: stay off disk.
-        state_db = ":memory:"
-    with SqliteIngestStateStore(state_db) as store:
+    # Nothing to read and nothing may be written: stay off disk.
+    ephemeral = args.dry_run and not Path(args.state_db).exists()
+    state = (
+        SqliteIngestStateStore.ephemeral()
+        if ephemeral
+        else SqliteIngestStateStore(args.state_db)
+    )
+    with state as store:
         if args.loop:
             while True:
                 summary = run_once(

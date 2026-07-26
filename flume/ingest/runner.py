@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from flume.ingest.fingerprint import FileFingerprint, fingerprint_file, is_quiet
-from flume.ingest.state import IngestStatus, SqliteIngestStateStore
+from flume.ingest.state import IngestStateStore, IngestStatus
 from flume.sources import DiscoveredTranscript, TranscriptSource
 
 
@@ -94,7 +94,7 @@ class IngestCycleSummary:
 def run_once(
     *,
     transcripts: TranscriptSource,
-    store: SqliteIngestStateStore,
+    store: IngestStateStore,
     ingester: IngestFunction,
     quiet_seconds: float,
     dry_run: bool = False,
