@@ -6,6 +6,7 @@ path enumeration) so each vendor module contains only format knowledge.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable
@@ -102,6 +103,24 @@ def iter_jsonl_objects(path: Path) -> Iterable[dict[str, Any]]:
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read all JSON objects from a JSONL file; empty list when unreadable."""
     return list(iter_jsonl_objects(path))
+
+
+def span_id(namespace: str, session_id: str, suffix: str) -> str:
+    """Deterministic span id. The namespace is the source name, so ids from
+    two sources can never collide even on an identical session id.
+
+    The hash inputs and widths are a wire format: they are stored, and
+    content rows join to spans on them. Changing either orphans every
+    existing row, so treat this as frozen rather than an implementation
+    detail."""
+    return hashlib.sha256(
+        f"{namespace}:{session_id}:{suffix}".encode()
+    ).hexdigest()[:16]
+
+
+def trace_id(namespace: str, session_id: str) -> str:
+    """Deterministic trace id for one session. Frozen, as `span_id`."""
+    return hashlib.sha256(f"{namespace}:{session_id}".encode()).hexdigest()[:32]
 
 
 def iso_ts_ns(ts: Any) -> int | None:

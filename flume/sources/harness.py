@@ -11,34 +11,34 @@ ends.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from flume.sources import SourceAdapter
-from flume.sources.utils import is_nav_shell, iso_ts_ns, iter_jsonl_lines
+from flume.sources.utils import (
+    is_nav_shell,
+    iso_ts_ns,
+    read_jsonl,
+    span_id,
+    trace_id,
+)
 from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]
 
 
+# Hash namespace for this source's span/trace ids. Stored and joined on,
+# so it is frozen: changing it orphans every existing row.
+_NAMESPACE = "harness"
+
+
 def _span_id(session_id: str, suffix: str) -> str:
-    return hashlib.sha256(f"harness:{session_id}:{suffix}".encode()).hexdigest()[:16]
+    return span_id(_NAMESPACE, session_id, suffix)
 
 
 def _trace_id(session_id: str) -> str:
-    return hashlib.sha256(f"harness:{session_id}".encode()).hexdigest()[:32]
-
-
-def _read_events(path: Path) -> list[dict[str, Any]]:
-    events = []
-    for line in iter_jsonl_lines(path):
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
+    return trace_id(_NAMESPACE, session_id)
 
 
 def _meta(events: list[dict[str, Any]], path: Path) -> tuple[dict[str, Any], str]:
@@ -47,7 +47,7 @@ def _meta(events: list[dict[str, Any]], path: Path) -> tuple[dict[str, Any], str
 
 
 def harness_to_spans(path: Path) -> list[Span]:
-    events = _read_events(path)
+    events = read_jsonl(path)
     if not events:
         return []
     meta, session_id = _meta(events, path)
@@ -165,7 +165,7 @@ def harness_to_spans(path: Path) -> list[Span]:
 
 
 def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
-    events = _read_events(path)
+    events = read_jsonl(path)
     rows: list[ContentRow] = []
     seq = 0
 

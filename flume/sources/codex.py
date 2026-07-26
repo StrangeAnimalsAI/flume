@@ -80,19 +80,18 @@ avoid the float rounding bug caught by the Claude Code parity check (INT-436).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable, Sequence
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from flume.sources import DiscoveredTranscript, SourceAdapter
 from flume.sources.utils import (
+    span_id,
+    trace_id,
     as_string,
     is_nav_shell,
     iso_ts_ns,
-    iter_jsonl_lines,
     iter_jsonl_objects,
     json_text,
     jsonl_paths,
@@ -112,7 +111,7 @@ _ROOT_TRANSCRIPT_PREVIEW_MAX = 800
 
 def rollout_to_spans(path: Path) -> list[Span]:
     """Map one Codex rollout JSONL to a list of span dicts."""
-    events = _read_events(path)
+    events = read_jsonl(path)
     if not events:
         return []
 
@@ -141,7 +140,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
     # First pass: collect LLM-request boundaries and tool call lifetimes.
     first_ns: int | None = None
     last_ns: int | None = None
-    boundary_ns = _ts_ns(events[0].get("timestamp"))  # opening edge of first turn
+    boundary_ns = iso_ts_ns(events[0].get("timestamp"))  # opening edge of first turn
     turn_boundaries: list[tuple[int, int, dict[str, Any], str | None]] = []
     # (start_ns, end_ns, last_token_usage, model)
 
@@ -150,7 +149,7 @@ def rollout_to_spans(path: Path) -> list[Span]:
     reasoning_items = 0
 
     for ev in events:
-        ts_ns = _ts_ns(ev.get("timestamp"))
+        ts_ns = iso_ts_ns(ev.get("timestamp"))
         if ts_ns is not None:
             if first_ns is None:
                 first_ns = ts_ns
@@ -315,18 +314,6 @@ def rollout_to_spans(path: Path) -> list[Span]:
     return [root, *turn_spans, *tool_spans]
 
 
-def _read_events(path: Path) -> list[dict[str, Any]]:
-    # Bounded streaming read: whole-file and single-line size are both
-    # capped, so a runaway multi-GB line cannot take down the ingest.
-    out: list[dict[str, Any]] = []
-    for line in iter_jsonl_lines(path):
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
-
-
 def _first_session_meta(events: list[dict[str, Any]]) -> dict[str, Any]:
     for ev in events:
         if ev.get("type") == "session_meta":
@@ -355,27 +342,15 @@ def _session_id(events: list[dict[str, Any]], path: Path) -> str:
     return path.stem
 
 
-def _ts_ns(ts: str | None) -> int | None:
-    if not ts:
-        return None
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-    # Integer microsecond path — float `dt.timestamp() * 1e9` drops sub-ms
-    # precision (INT-436 parity regression). Keep this in sync with the
-    # Claude Code mapper.
-    epoch_utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    delta = dt - epoch_utc
-    return (
-        delta.days * 86_400_000_000_000
-        + delta.seconds * 1_000_000_000
-        + delta.microseconds * 1_000
-    )
+
+
+# Hash namespace for this source's span/trace ids. Stored and joined on,
+# so it is frozen: changing it orphans every existing row.
+_NAMESPACE = "codex"
 
 
 def _trace_id(session_id: str) -> str:
-    return hashlib.sha256(f"codex:{session_id}".encode()).hexdigest()[:32]
+    return trace_id(_NAMESPACE, session_id)
 
 
 def trace_id_for_session(session_id: str) -> str:
@@ -384,9 +359,7 @@ def trace_id_for_session(session_id: str) -> str:
 
 
 def _span_id(session_id: str, suffix: str) -> str:
-    return hashlib.sha256(
-        f"codex:{session_id}:{suffix}".encode()
-    ).hexdigest()[:16]
+    return span_id(_NAMESPACE, session_id, suffix)
 
 
 def _turn_span(

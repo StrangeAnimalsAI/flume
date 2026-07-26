@@ -12,10 +12,8 @@ hints. Pure data — no network, no SDK.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable, Iterator, Sequence
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +22,13 @@ from flume.sources.utils import (
     as_string,
     is_nav_shell,
     iso_ts_ns,
-    iter_jsonl_lines,
     iter_jsonl_objects,
     json_text,
     jsonl_paths,
     read_jsonl,
     result_text,
+    span_id,
+    trace_id,
     unique_sorted,
 )
 from flume.store.base import ContentKind, ContentRow
@@ -47,7 +46,7 @@ _ROOT_TRANSCRIPT_PREVIEW_MAX = 800
 def jsonl_to_spans(path: Path) -> list[Span]:
     """Map one Claude Code JSONL transcript to a list of span dicts."""
     session_id = path.stem
-    events = _read_events(path)
+    events = read_jsonl(path)
     trace_id = _trace_id(session_id)
     root_span_id = _span_id(session_id, "root")
 
@@ -76,7 +75,7 @@ def jsonl_to_spans(path: Path) -> list[Span]:
         )
 
     for ev in events:
-        ts_ns = _ts_ns(ev.get("timestamp"))
+        ts_ns = iso_ts_ns(ev.get("timestamp"))
         if ts_ns is not None:
             if first_ns is None:
                 first_ns = ts_ns
@@ -124,37 +123,13 @@ def jsonl_to_spans(path: Path) -> list[Span]:
     return [root, *spans]
 
 
-def _read_events(path: Path) -> list[dict[str, Any]]:
-    # Bounded streaming read: whole-file and single-line size are both
-    # capped, so a runaway multi-GB line cannot take down the ingest.
-    out: list[dict[str, Any]] = []
-    for line in iter_jsonl_lines(path):
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
-
-
-def _ts_ns(ts: str | None) -> int | None:
-    if not ts:
-        return None
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-    # Integer microsecond path — float `dt.timestamp() * 1e9` drops sub-ms
-    # precision (e.g. .827 → .826999808), which then round-trips through
-    # ClickHouse as a visible 1 ms drift. Using Unix epoch seconds as an int
-    # plus the microsecond remainder keeps the value exact to the microsecond.
-    from datetime import timezone
-    epoch_utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    delta = dt - epoch_utc
-    return delta.days * 86_400_000_000_000 + delta.seconds * 1_000_000_000 + delta.microseconds * 1_000
+# Hash namespace for this source's span/trace ids. Stored and joined on,
+# so it is frozen: changing it orphans every existing row.
+_NAMESPACE = "claude-code"
 
 
 def _trace_id(session_id: str) -> str:
-    return hashlib.sha256(f"claude-code:{session_id}".encode()).hexdigest()[:32]
+    return trace_id(_NAMESPACE, session_id)
 
 
 def trace_id_for_session(session_id: str) -> str:
@@ -163,9 +138,7 @@ def trace_id_for_session(session_id: str) -> str:
 
 
 def _span_id(session_id: str, suffix: str) -> str:
-    return hashlib.sha256(
-        f"claude-code:{session_id}:{suffix}".encode()
-    ).hexdigest()[:16]
+    return span_id(_NAMESPACE, session_id, suffix)
 
 
 def _turn_span(
