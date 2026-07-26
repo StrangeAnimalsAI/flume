@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from flume.harness.transcript import ts_ns
+from flume.sources import SourceAdapter
 from flume.sources.common import is_nav_shell, iter_jsonl_lines
-from flume.store.base import ContentRow
+from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]
 
@@ -169,7 +170,7 @@ def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
     rows: list[ContentRow] = []
     seq = 0
 
-    def add(span_id: str | None, kind: str, text: str, ts: int | None) -> None:
+    def add(span_id: str | None, kind: ContentKind, text: str, ts: int | None) -> None:
         nonlocal seq
         if not text:
             return
@@ -230,3 +231,15 @@ def classify_tool(name: str | None, args_preview: str | None) -> str:
     if name in ("bash", "Bash"):
         return "navigation" if is_nav_shell(args_preview) else "bash-other"
     return "other"
+
+
+# The module owns its adapter: `flume.sources` names this module in its
+# registry and imports it only when something resolves "harness".
+ADAPTER = SourceAdapter(
+    name="harness",
+    vendor="anthropic",
+    map_spans=harness_to_spans,
+    extract_contents=extract_contents,
+    probe=probe,
+    classify_tool=classify_tool,
+)

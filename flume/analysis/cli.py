@@ -628,9 +628,9 @@ def _cmd_sql(store, args) -> list[dict[str, Any]]:
 
 
 def _cmd_sources(store, args) -> list[dict[str, Any]]:
-    from flume.sources import adapters
+    from flume.sources import registered
 
-    return [{"source": a.name, "vendor": a.vendor} for a in adapters()]
+    return [{"source": a.name, "vendor": a.vendor} for a in registered()]
 
 
 def _cmd_raw_stats(store, args) -> list[dict[str, Any]]:
@@ -672,14 +672,14 @@ def _cmd_retention_run(store, args) -> dict[str, Any]:
     from flume.store.config import load_policy
     from flume.store.retention import run_retention
 
-    from flume.sources import adapters
+    from flume.sources import registered
 
     with open_archive(args.archive_url) as archive:
         return run_retention(
             store=store,
             archive=archive,
             policy=load_policy(args.config),
-            sources=[a.name for a in adapters()],
+            sources=[a.name for a in registered()],
             dry_run=args.dry_run,
         )
 

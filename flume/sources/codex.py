@@ -87,7 +87,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flume.sources import DiscoveredTranscript
+from flume.sources import DiscoveredTranscript, SourceAdapter
 from flume.sources.common import (
     as_string,
     is_nav_shell,
@@ -99,7 +99,7 @@ from flume.sources.common import (
     read_jsonl,
     unique_sorted,
 )
-from flume.store.base import ContentRow
+from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]
 
@@ -785,7 +785,7 @@ def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
     rows: list[ContentRow] = []
     seq = 0
 
-    def add(span_id: str | None, kind: str, text: str, ts: int | None) -> None:
+    def add(span_id: str | None, kind: ContentKind, text: str, ts: int | None) -> None:
         nonlocal seq
         if not text:
             return
@@ -986,3 +986,30 @@ def classify_tool(name: str | None, args_preview: str | None) -> str:
     if name == "read_file":
         return "navigation"
     return "other"
+
+
+def make_source(
+    roots=None,
+    include_archived: bool = False,
+    archived_root=None,
+    **_ignored,
+) -> CodexRolloutSource:
+    """Build this source's discovery. Keyword options come from the CLI's
+    flags, or from a `[sources]` table for a config-declared source."""
+    return CodexRolloutSource(
+        roots,
+        include_archived=bool(include_archived),
+        archived_root=archived_root or DEFAULT_CODEX_ARCHIVED_ROOT,
+    )
+
+
+# The module owns its adapter: `flume.sources` names this module in its
+# registry and imports it only when something resolves "codex".
+ADAPTER = SourceAdapter(
+    name="codex",
+    vendor="openai",
+    map_spans=rollout_to_spans,
+    extract_contents=extract_contents,
+    probe=probe,
+    classify_tool=classify_tool,
+)

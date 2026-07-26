@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from flume.sources import DiscoveredTranscript
+from flume.sources import DiscoveredTranscript, SourceAdapter
 from flume.sources.common import (
     as_string,
     is_nav_shell,
@@ -32,7 +32,7 @@ from flume.sources.common import (
     result_text,
     unique_sorted,
 )
-from flume.store.base import ContentRow
+from flume.store.base import ContentKind, ContentRow
 
 Span = dict[str, Any]
 
@@ -617,7 +617,7 @@ def extract_contents(path: Path, session_id: str) -> list[ContentRow]:
     rows: list[ContentRow] = []
     seq = 0
 
-    def add(span_id: str | None, kind: str, text: str, ts: int | None) -> None:
+    def add(span_id: str | None, kind: ContentKind, text: str, ts: int | None) -> None:
         nonlocal seq
         if not text:
             return
@@ -829,3 +829,21 @@ def classify_tool(name: str | None, args_preview: str | None) -> str:
     if name in _EDIT_TOOLS:
         return "editing"
     return "other"
+
+
+def make_source(roots=None, **_ignored) -> ClaudeCodeTranscriptSource:
+    """Build this source's discovery. Keyword options come from the CLI's
+    flags, or from a `[sources]` table for a config-declared source."""
+    return ClaudeCodeTranscriptSource(roots)
+
+
+# The module owns its adapter: `flume.sources` names this module in its
+# registry and imports it only when something resolves "claude-code".
+ADAPTER = SourceAdapter(
+    name="claude-code",
+    vendor="anthropic",
+    map_spans=jsonl_to_spans,
+    extract_contents=extract_contents,
+    probe=probe,
+    classify_tool=classify_tool,
+)

@@ -11,8 +11,6 @@ from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
 from flume.sources import TranscriptSource
-from flume.sources.claude_code import ClaudeCodeTranscriptSource
-from flume.sources.codex import DEFAULT_CODEX_ARCHIVED_ROOT, CodexRolloutSource
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,7 +44,7 @@ def _open_backends(args: argparse.Namespace, parser: argparse.ArgumentParser):
 def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
     if not args.apply_retention or session_store is None or archive is None:
         return
-    from flume.sources import adapters
+    from flume.sources import registered
     from flume.store.config import load_policy
     from flume.store.retention import run_retention
 
@@ -54,7 +52,7 @@ def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
         store=session_store,
         archive=archive,
         policy=load_policy(),
-        sources=[a.name for a in adapters()],
+        sources=[a.name for a in registered()],
         dry_run=args.dry_run,
     )
     _print_summary({"retention": report})
@@ -228,34 +226,32 @@ def _source_and_ingest(
             parser.error("--fake-root is required for --source fake")
         return FakeTranscriptSource(args.fake_root), fake_ingest
 
+    from flume.ingest.write import store_ingest_function
+    from flume.sources import get_adapter, get_discovery
+
+    try:
+        source = get_discovery(source_name, **_discovery_flags(args, source_name))
+        adapter = get_adapter(source_name)
+    except ValueError as exc:
+        # Unknown source, ambiguous vendor alias, or a push-only source with
+        # no discovery — the registry's message already says which.
+        parser.error(str(exc))
+
+    return source, store_ingest_function(adapter, session_store, archive)
+
+
+def _discovery_flags(args: argparse.Namespace, source_name: str) -> dict:
+    """CLI flags for the sources flume ships, mapped to their `make_source`
+    keywords. A config-declared source takes its options from `[sources]`."""
     if source_name == "codex":
-        source = CodexRolloutSource(
-            args.codex_root,
-            include_archived=args.include_archived_codex,
-            archived_root=args.codex_archived_root
-            if args.codex_archived_root is not None
-            else DEFAULT_CODEX_ARCHIVED_ROOT,
-        )
-        from flume.ingest.write import store_ingest_function
-        from flume.sources import get_adapter
-
-        return source, store_ingest_function(
-            get_adapter("codex"), session_store, archive
-        )
-
+        return {
+            "roots": args.codex_root,
+            "include_archived": args.include_archived_codex,
+            "archived_root": args.codex_archived_root,
+        }
     if source_name == "claude-code":
-        source = ClaudeCodeTranscriptSource(args.claude_root)
-        from flume.ingest.write import store_ingest_function
-        from flume.sources import get_adapter
-
-        return source, store_ingest_function(
-            get_adapter("claude-code"), session_store, archive
-        )
-
-    parser.error(
-        f"unsupported --source {args.source!r}; supported: fake, codex, "
-        "claude-code (or vendor aliases anthropic, openai)"
-    )
+        return {"roots": args.claude_root}
+    return {}
 
 
 def _canonical_source(name: str) -> str:

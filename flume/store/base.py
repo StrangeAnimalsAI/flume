@@ -14,15 +14,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Self, runtime_checkable
+from typing import Any, Literal, Protocol, Self, get_args, runtime_checkable
 
-CONTENT_KINDS = (
+ContentKind = Literal[
     "thinking",
     "user_message",
     "assistant_message",
     "tool_arguments",
     "tool_result",
-)
+]
+
+# Derived from the Literal rather than written twice, so the static type and
+# the runtime tuple cannot drift. Values stay plain `str` at runtime: they go
+# into sqlite and into argparse `choices=` unchanged.
+CONTENT_KINDS: tuple[ContentKind, ...] = get_args(ContentKind)
 
 
 @dataclass(frozen=True)
@@ -30,7 +35,7 @@ class ContentRow:
     """One full-fidelity text item tied to a span."""
 
     span_id: str | None
-    kind: str  # one of CONTENT_KINDS
+    kind: ContentKind
     seq: int
     text: str
     ts_ns: int | None = None

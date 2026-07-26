@@ -59,6 +59,120 @@ def test_adapter_resolves_by_name_and_vendor() -> None:
         get_adapter("gemini")
 
 
+def test_registry_lists_sources_without_importing_them() -> None:
+    """The point of the lazy registry: naming a source must not load its
+    parser. Run in a clean interpreter, since this process has them all."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, flume.sources as s;"
+        "names=[i.name for i in s.registered()];"
+        "loaded=[m for m in sys.modules if m.startswith('flume.sources.')"
+        " and not m.endswith('common')];"
+        "print(sorted(names), sorted(loaded))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    names, loaded = out.split("] [")
+    assert "claude-code" in names and "codex" in names and "harness" in names
+    assert loaded == "]"  # no vendor module imported
+
+
+def test_config_registers_a_third_party_source(tmp_path, monkeypatch) -> None:
+    """A source flume does not ship, added by config alone — no edit to flume."""
+    pkg = tmp_path / "acme_adapter.py"
+    pkg.write_text(
+        "from flume.sources import SourceAdapter\n"
+        "ADAPTER = SourceAdapter(name='my-agent', vendor='acme',\n"
+        "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[sources]\n"my-agent" = { vendor = "acme", module = "acme_adapter" }\n'
+    )
+    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
+
+    adapter = get_adapter("my-agent")
+    assert adapter.name == "my-agent" and adapter.vendor == "acme"
+    assert get_adapter("acme").name == "my-agent"  # resolves by vendor too
+    from flume.sources import registered
+
+    assert "my-agent" in [i.name for i in registered()]
+
+
+def test_config_source_is_discoverable_with_its_own_roots(
+    tmp_path, monkeypatch
+) -> None:
+    """The half that makes config registration useful: a declared source can
+    be discovered by the daemon, not just ingested by path."""
+    from flume.sources import DiscoveredTranscript, get_discovery
+
+    (tmp_path / "acme_disc.py").write_text(
+        "from pathlib import Path\n"
+        "from flume.sources import DiscoveredTranscript, SourceAdapter\n"
+        "ADAPTER = SourceAdapter(name='my-agent', vendor='acme',\n"
+        "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
+        "class _Src:\n"
+        "    source_type = 'my-agent'\n"
+        "    def __init__(self, roots): self.roots = [Path(r) for r in roots]\n"
+        "    def discover(self):\n"
+        "        for r in self.roots:\n"
+        "            for p in sorted(Path(r).glob('*.jsonl')):\n"
+        "                yield DiscoveredTranscript(source_type='my-agent',"
+        " path=p, session_id=p.stem)\n"
+        "def make_source(roots=None, **_):\n"
+        "    return _Src(roots or [])\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "s1.jsonl").write_text("{}\n")
+    (sessions / "s2.jsonl").write_text("{}\n")
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[sources]\n"my-agent" = { vendor = "acme", module = "acme_disc", '
+        f'roots = ["{sessions}"] }}\n'
+    )
+    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
+
+    found = list(get_discovery("my-agent").discover())
+    assert [t.session_id for t in found] == ["s1", "s2"]
+    assert all(isinstance(t, DiscoveredTranscript) for t in found)
+
+
+def test_push_only_source_has_no_discovery() -> None:
+    from flume.sources import get_discovery
+
+    with pytest.raises(ValueError, match="push-only"):
+        get_discovery("harness")
+
+
+def test_config_source_errors_name_the_problem(tmp_path, monkeypatch) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[sources]\n"broken" = { vendor = "acme" }\n')
+    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
+    with pytest.raises(ValueError, match="missing module"):
+        get_adapter("broken")
+
+    cfg.write_text(
+        '[sources]\n"ghost" = { vendor = "acme", module = "no_such_module_xyz" }\n'
+    )
+    with pytest.raises(ValueError, match="failed to import"):
+        get_adapter("ghost")
+
+    (tmp_path / "empty_adapter.py").write_text("# no ADAPTER here\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    cfg.write_text(
+        '[sources]\n"empty" = { vendor = "acme", module = "empty_adapter" }\n'
+    )
+    with pytest.raises(ValueError, match="defines no module-level"):
+        get_adapter("empty")
+
+
 # -- archive ----------------------------------------------------------------
 
 
@@ -97,18 +211,17 @@ def test_ingest_path_archives_raw(tmp_path: Path) -> None:
         assert archive.stats()[0]["source"] == "claude-code"
 
 
-def test_mapper_failure_still_archives_raw(tmp_path: Path, monkeypatch) -> None:
-    import flume.sources as sources
+def test_mapper_failure_still_archives_raw(tmp_path: Path) -> None:
     from flume.sources import SourceAdapter
 
     def boom(path: Path):
         raise OverflowError("string longer than INT_MAX bytes")
 
-    monkeypatch.setitem(
-        sources._ADAPTERS,
-        "boom",
-        SourceAdapter(name="boom", vendor="test", map_spans=boom,
-                      extract_contents=lambda p, s: []),
+    # Passed straight in: what's under test is the write path's ordering
+    # (archive before parse), not how the adapter was looked up.
+    adapter = SourceAdapter(
+        name="boom", vendor="test", map_spans=boom,
+        extract_contents=lambda p, s: [],
     )
     src = _write_session(tmp_path, session_id="giant")
     with (
@@ -116,7 +229,7 @@ def test_mapper_failure_still_archives_raw(tmp_path: Path, monkeypatch) -> None:
         open_archive(f"file://{tmp_path}/raw") as archive,
     ):
         with pytest.raises(OverflowError):
-            ingest_path(store, get_adapter("boom"), src, archive=archive)
+            ingest_path(store, adapter, src, archive=archive)
         assert len(archive.versions("giant")) == 1  # raw survived the crash
 
 
