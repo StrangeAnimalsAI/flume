@@ -52,7 +52,7 @@ def _classifier_for(source: str):
 _CLASSIFIERS: dict[str, Any] = {}
 
 
-def _fallback_classify(name: str | None, args_preview: str | None) -> str:
+def _fallback_classify(_name: str | None, args_preview: str | None) -> str:
     from flume.sources.utils import is_nav_shell
 
     return "navigation" if is_nav_shell(args_preview) else "other"

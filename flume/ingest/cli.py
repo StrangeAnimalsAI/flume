@@ -10,7 +10,10 @@ from pathlib import Path
 from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
-from flume.sources import TranscriptSource
+from flume.sources import TranscriptSource, registered
+from flume.store.archive import open_archive
+from flume.store.base import open_store
+from flume.store.config import load_policy
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     # Dry runs must not create the store, archive, or their directories;
     # the runner never invokes the ingest function under --dry-run.
     session_store, archive = (
-        (None, None) if args.dry_run else _open_backends(args, parser)
+        (None, None) if args.dry_run else _open_backends(args)
     )
     try:
         source, ingest = _source_and_ingest(args, parser, session_store, archive)
@@ -33,10 +36,7 @@ def main(argv: list[str] | None = None) -> int:
             archive.close()
 
 
-def _open_backends(args: argparse.Namespace, parser: argparse.ArgumentParser):
-    from flume.store.archive import open_archive
-    from flume.store.base import open_store
-
+def _open_backends(args: argparse.Namespace):
     archive = None if args.no_raw_archive else open_archive(args.archive_url)
     return open_store(args.store_url), archive
 
@@ -44,8 +44,9 @@ def _open_backends(args: argparse.Namespace, parser: argparse.ArgumentParser):
 def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
     if not args.apply_retention or session_store is None or archive is None:
         return
-    from flume.sources import registered
-    from flume.store.config import load_policy
+    # Only genuinely deferred import in this module: retention machinery
+    # loads solely for --apply-retention. The rest of flume.store is
+    # already imported at module scope via flume.ingest.write.
     from flume.store.retention import run_retention
 
     report = run_retention(

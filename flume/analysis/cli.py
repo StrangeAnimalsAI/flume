@@ -327,7 +327,7 @@ def _parser() -> argparse.ArgumentParser:
 # -- commands ---------------------------------------------------------------
 
 
-def _cmd_overview(store, args) -> dict[str, Any]:
+def _cmd_overview(store, _args) -> dict[str, Any]:
     return store.overview()
 
 
@@ -437,7 +437,7 @@ def _cmd_experiment_stop(store, args) -> dict[str, Any]:
     return row
 
 
-def _cmd_experiment_list(store, args) -> list[dict[str, Any]]:
+def _cmd_experiment_list(store, _args) -> list[dict[str, Any]]:
     _require_sqlite(store, "experiment")
     return store.list_experiments()
 
@@ -619,7 +619,7 @@ def _cmd_rebuild(store, args) -> dict[str, Any]:
         )
 
 
-def _cmd_sql(store, args) -> list[dict[str, Any]]:
+def _cmd_sql(_store, args) -> list[dict[str, Any]]:
     import sqlite3
 
     from flume.store.base import DEFAULT_STORE_URL
@@ -666,20 +666,20 @@ def _cmd_review(store, args) -> dict[str, Any]:
     )
 
 
-def _cmd_sources(store, args) -> list[dict[str, Any]]:
+def _cmd_sources(_store, _args) -> list[dict[str, Any]]:
     from flume.sources import registered
 
     return [{"source": a.name} for a in registered()]
 
 
-def _cmd_raw_stats(store, args) -> list[dict[str, Any]]:
+def _cmd_raw_stats(_store, args) -> list[dict[str, Any]]:
     from flume.store.archive import open_archive
 
     with open_archive(args.archive_url) as archive:
         return archive.stats()
 
 
-def _cmd_raw_versions(store, args) -> list[dict[str, Any]]:
+def _cmd_raw_versions(_store, args) -> list[dict[str, Any]]:
     from dataclasses import asdict
 
     from flume.store.archive import open_archive
@@ -688,7 +688,7 @@ def _cmd_raw_versions(store, args) -> list[dict[str, Any]]:
         return [asdict(v) for v in archive.versions(args.session_id)]
 
 
-def _cmd_raw_restore(store, args) -> dict[str, Any]:
+def _cmd_raw_restore(_store, args) -> dict[str, Any]:
     from flume.store.archive import open_archive
 
     with open_archive(args.archive_url) as archive:
@@ -700,7 +700,7 @@ def _cmd_raw_restore(store, args) -> dict[str, Any]:
     return {"restored": str(out), "sha256": entry.sha256, "bytes": entry.size_bytes}
 
 
-def _cmd_retention_show(store, args) -> dict[str, Any]:
+def _cmd_retention_show(_store, args) -> dict[str, Any]:
     from flume.store.config import load_policy
 
     return load_policy(args.config).describe()
