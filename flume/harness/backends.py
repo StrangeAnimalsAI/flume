@@ -100,6 +100,6 @@ def get_backend(name: str) -> Backend:
             raise SystemExit(
                 f"backend {resolved!r} needs the {module!r} package, which is "
                 f"an optional dependency. Install it with: "
-                f"pip install 'flume[{extra}]'"
+                f"uv pip install 'flume[{extra}]'"
             ) from None
     return factory()
