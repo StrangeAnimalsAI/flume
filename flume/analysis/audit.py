@@ -13,7 +13,7 @@ import collections
 import re
 from typing import Any
 
-from flume.store.base import SessionStore
+from flume.store.base import AnalyzedStore
 
 _SHELL_TOOLS = ["Bash", "exec_command"]
 _SCRIPT_MARKERS = ("python3 -", "python -", "<<EOF", "<<'EOF'", "<<'PY'", "<< 'PY'")
@@ -24,7 +24,7 @@ _OPS = re.compile(
 
 
 def script_clusters(
-    store: SessionStore,
+    store: AnalyzedStore,
     *,
     source: str | None = None,
     since_ns: int | None = None,

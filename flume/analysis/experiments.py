@@ -1,6 +1,6 @@
 """Experiment comparison: tagged sessions vs a pre-experiment baseline.
 
-An experiment (see SqliteSessionStore.create_experiment) tags sessions by
+An experiment (see SqliteAnalyzedStore.create_experiment) tags sessions by
 time window + scope. `compare_experiment` puts numbers side by side:
 
 - baseline = sessions matching the same scope that STARTED in the

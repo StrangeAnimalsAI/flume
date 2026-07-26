@@ -11,8 +11,8 @@ from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
 from flume.sources import TranscriptSource, registered
-from flume.store.archive import open_archive
-from flume.store.base import open_store
+from flume.store.raw import open_raw_store
+from flume.store.base import open_analyzed_store
 from flume.store.config import load_policy
 
 
@@ -21,28 +21,28 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.state_db is None:
         args.state_db = Path.home() / ".flume" / "auto-ingest-state.sqlite3"
-    # Dry runs must not create the store, archive, or their directories;
+    # Dry runs must not create the store, raw_store, or their directories;
     # the runner never invokes the ingest function under --dry-run.
-    session_store, archive = (
-        (None, None) if args.dry_run else _open_backends(args)
+    analyzed_store, raw_store = (
+        (None, None) if args.dry_run else _open_stores(args)
     )
     try:
-        source, ingest = _source_and_ingest(args, parser, session_store, archive)
-        return _run(args, source, ingest, session_store, archive)
+        source, ingest = _source_and_ingest(args, parser, analyzed_store, raw_store)
+        return _run(args, source, ingest, analyzed_store, raw_store)
     finally:
-        if session_store is not None:
-            session_store.close()
-        if archive is not None:
-            archive.close()
+        if analyzed_store is not None:
+            analyzed_store.close()
+        if raw_store is not None:
+            raw_store.close()
 
 
-def _open_backends(args: argparse.Namespace):
-    archive = None if args.no_raw_archive else open_archive(args.archive_url)
-    return open_store(args.store_url), archive
+def _open_stores(args: argparse.Namespace):
+    raw_store = None if args.no_raw_store else open_raw_store(args.raw_store_url)
+    return open_analyzed_store(args.analyzed_store_url), raw_store
 
 
-def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
-    if not args.apply_retention or session_store is None or archive is None:
+def _apply_retention(args: argparse.Namespace, analyzed_store, raw_store) -> None:
+    if not args.apply_retention or analyzed_store is None or raw_store is None:
         return
     # Only genuinely deferred import in this module: retention machinery
     # loads solely for --apply-retention. The rest of flume.store is
@@ -50,8 +50,8 @@ def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
     from flume.store.retention import run_retention
 
     report = run_retention(
-        store=session_store,
-        archive=archive,
+        store=analyzed_store,
+        raw_store=raw_store,
         policy=load_policy(),
         sources=[a.name for a in registered()],
         dry_run=args.dry_run,
@@ -59,7 +59,7 @@ def _apply_retention(args: argparse.Namespace, session_store, archive) -> None:
     _print_summary({"retention": report})
 
 
-def _run(args: argparse.Namespace, source, ingest, session_store, archive) -> int:
+def _run(args: argparse.Namespace, source, ingest, analyzed_store, raw_store) -> int:
     state_db = args.state_db
     if args.dry_run and not Path(state_db).exists():
         # Nothing to read and nothing may be written: stay off disk.
@@ -75,7 +75,7 @@ def _run(args: argparse.Namespace, source, ingest, session_store, archive) -> in
                     dry_run=args.dry_run,
                 )
                 _print_summary(summary.to_dict())
-                _apply_retention(args, session_store, archive)
+                _apply_retention(args, analyzed_store, raw_store)
                 time.sleep(args.interval_seconds)
 
         summary = run_once(
@@ -86,7 +86,7 @@ def _run(args: argparse.Namespace, source, ingest, session_store, archive) -> in
             dry_run=args.dry_run,
         )
         _print_summary(summary.to_dict())
-        _apply_retention(args, session_store, archive)
+        _apply_retention(args, analyzed_store, raw_store)
         return 1 if summary.failed else 0
 
 
@@ -137,32 +137,23 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--backend",
-        choices=("store",),
-        default="store",
-        help=(
-            "Ingest sink. The local session store is the only backend; "
-            "this flag is kept for service-plist compatibility."
-        ),
-    )
-    parser.add_argument(
-        "--store-url",
+        "--analyzed-store-url",
         default=None,
         help=(
-            "Session store URL for --backend store "
-            "(default: sqlite://~/.flume/store.sqlite3)."
+            "Analyzed store URL (default: sqlite://~/.flume/store.sqlite3).\n"
+            "Holds the rows derived from parsing."
         ),
     )
     parser.add_argument(
-        "--archive-url",
+        "--raw-store-url",
         default=None,
         help=(
-            "Raw archive URL for --backend store "
-            "(default: file://~/.flume/raw)."
+            "Raw store URL (default: file://~/.flume/raw). Holds the\n"
+            "original transcript bytes, captured before parsing."
         ),
     )
     parser.add_argument(
-        "--no-raw-archive",
+        "--no-raw-store",
         action="store_true",
         help="Skip capturing raw file copies when ingesting to the store.",
     )
@@ -171,7 +162,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "After each ingest pass, enforce retention TTLs from "
-            "~/.flume/config.toml (store backend only)."
+            "~/.flume/config.toml."
         ),
     )
     parser.add_argument(
@@ -217,8 +208,8 @@ def _parser() -> argparse.ArgumentParser:
 def _source_and_ingest(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
-    session_store=None,
-    archive=None,
+    analyzed_store=None,
+    raw_store=None,
 ) -> tuple[TranscriptSource, IngestFunction]:
     source_name = args.source
     if source_name == "fake":
@@ -237,7 +228,7 @@ def _source_and_ingest(
         # the registry's message already says which.
         parser.error(str(exc))
 
-    return source, store_ingest_function(adapter, session_store, archive)
+    return source, store_ingest_function(adapter, analyzed_store, raw_store)
 
 
 def _discovery_flags(args: argparse.Namespace, source_name: str) -> dict:

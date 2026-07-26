@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from flume.analysis.hooks import hook_events, hooks_summary
 from flume.store.base import ContentRow, SessionBundle
-from flume.store.sqlite import SqliteSessionStore
+from flume.store.sqlite import SqliteAnalyzedStore
 
 BASE_NS = 1_780_000_000 * 1_000_000_000
 SECOND_NS = 1_000_000_000
@@ -57,7 +57,7 @@ def _session(session_id, *, denial_ts, later_read_of=None):
 
 
 def test_marker_parsed_and_bypass_detected(tmp_path):
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         store.ingest_session(
             _session("bypasser", denial_ts=BASE_NS,
                      later_read_of="/repo/src/big.py")
@@ -76,7 +76,7 @@ def test_marker_parsed_and_bypass_detected(tmp_path):
 
 
 def test_summary_rolls_up_compliance(tmp_path):
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         store.ingest_session(
             _session("s1", denial_ts=BASE_NS, later_read_of="/repo/src/big.py")
         )
@@ -107,7 +107,7 @@ def test_quoted_marker_in_bash_output_is_not_an_event(tmp_path):
         "ended_at_ns": BASE_NS + SECOND_NS, "duration_ms": 10,
         "is_error": 0, "result_chars": 300,
     })
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         store.ingest_session(bundle)
         events = hook_events(store)
     # only the real denial survives; the grep echo is filtered
@@ -116,7 +116,7 @@ def test_quoted_marker_in_bash_output_is_not_an_event(tmp_path):
 
 
 def test_session_filter_and_empty_window(tmp_path):
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         store.ingest_session(_session("only", denial_ts=BASE_NS))
         assert hook_events(store, session_id="only")
         assert hook_events(store, session_id="other") == []

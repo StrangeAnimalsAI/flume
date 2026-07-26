@@ -1,4 +1,4 @@
-"""SQLite implementation of SessionStore.
+"""SQLite implementation of AnalyzedStore.
 
 One file, no server, FTS5 full-text search over thinking/messages/tool
 payloads when available (falls back to LIKE otherwise). Re-ingesting a
@@ -13,7 +13,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from flume.store.base import ContentRow, SessionBundle, SessionStore
+from flume.store.base import ContentRow, SessionBundle, AnalyzedStore
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -150,7 +150,7 @@ END;
 """
 
 
-class SqliteSessionStore(SessionStore):
+class SqliteAnalyzedStore(AnalyzedStore):
     def __init__(self, path: str | Path, *, readonly: bool = False) -> None:
         db_path = Path(str(path)).expanduser()
         if readonly:
@@ -884,7 +884,7 @@ class SqliteSessionStore(SessionStore):
     #
     # Public because the analysis layer depends on them by name (see
     # flume.store.base.SqlReadable for why analytics declare a SQL
-    # capability instead of growing SessionStore).
+    # capability instead of growing AnalyzedStore).
 
     def rows(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
@@ -895,7 +895,7 @@ class SqliteSessionStore(SessionStore):
 
 
 # SQLite caps a single string around 1 GB; a content row anywhere near that
-# is pathological (the raw archive keeps the true bytes regardless).
+# is pathological (the raw store keeps the true bytes regardless).
 _CONTENT_TEXT_MAX = 50_000_000
 
 
@@ -931,7 +931,7 @@ def _content_dict(session_id: str, row: ContentRow) -> dict[str, Any]:
         omitted = len(text) - _CONTENT_TEXT_MAX
         text = (
             text[:_CONTENT_TEXT_MAX]
-            + f"\n...[store cap: {omitted} chars omitted; full text in raw archive]"
+            + f"\n...[store cap: {omitted} chars omitted; full text in raw store]"
         )
     return {
         "session_id": session_id,

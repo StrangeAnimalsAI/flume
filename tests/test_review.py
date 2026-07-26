@@ -12,14 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from flume.analysis.review import DEFAULTS, load_review_config, run_review
-from flume.store.sqlite import SqliteSessionStore
+from flume.store.sqlite import SqliteAnalyzedStore
 
 SEC_NS = 1_000_000_000
 BASE_NS = 1_780_000_000 * SEC_NS
 
 
-def _store(tmp_path: Path) -> SqliteSessionStore:
-    return SqliteSessionStore(tmp_path / "store.sqlite3")
+def _store(tmp_path: Path) -> SqliteAnalyzedStore:
+    return SqliteAnalyzedStore(tmp_path / "store.sqlite3")
 
 
 def test_config_layers_over_defaults(tmp_path, monkeypatch) -> None:

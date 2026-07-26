@@ -1,10 +1,10 @@
-"""The SQL capability boundary between SessionStore and the analysis layer.
+"""The SQL capability boundary between AnalyzedStore and the analysis layer.
 
 Analytics need ad-hoc SQL; the portable store contract does not provide it.
-Rather than grow SessionStore with ~15 single-caller aggregations, analysis
+Rather than grow AnalyzedStore with ~15 single-caller aggregations, analysis
 declares `SqlReadable` explicitly. These tests pin that boundary: a
 SQL-capable store satisfies it structurally, a store that only implements
-SessionStore fails with a message naming the feature, and no caller reaches
+AnalyzedStore fails with a message naming the feature, and no caller reaches
 for a private attribute to find out.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from flume.store.base import (
     StoreCapabilityError,
     require_sql,
 )
-from flume.store.sqlite import SqliteSessionStore
+from flume.store.sqlite import SqliteAnalyzedStore
 
 
 class _NoSqlStore:
@@ -33,7 +33,7 @@ class _NoSqlStore:
 
 
 def test_sqlite_satisfies_the_protocol_structurally(tmp_path: Path) -> None:
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         assert isinstance(store, SqlReadable)
         # And the surface is public — no private attribute access anywhere.
         assert store.rows("SELECT 1 AS n") == [{"n": 1}]
@@ -54,7 +54,7 @@ def test_require_sql_names_the_feature_that_needs_it() -> None:
 
 
 def test_require_sql_passes_a_capable_store_through(tmp_path: Path) -> None:
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         assert require_sql(store, "anything") is store
 
 

@@ -10,15 +10,15 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-from flume.store.archive import RawArchive
-from flume.store.base import SessionStore
+from flume.store.raw import RawStore
+from flume.store.base import AnalyzedStore
 from flume.store.config import RetentionPolicy
 
 
 def run_retention(
     *,
-    store: SessionStore,
-    archive: RawArchive,
+    store: AnalyzedStore,
+    raw_store: RawStore,
     policy: RetentionPolicy,
     sources: Iterable[str],
     now_ns: int | None = None,
@@ -35,10 +35,10 @@ def run_retention(
         if raw_ttl is None:
             report["raw"][source] = {"ttl": "forever", "deleted": 0}
         else:
-            expired = archive.expired(source, now - raw_ttl)
+            expired = raw_store.expired(source, now - raw_ttl)
             if not dry_run:
                 for entry in expired:
-                    archive.delete(entry)
+                    raw_store.delete(entry)
             report["raw"][source] = {
                 "ttl_ns": raw_ttl,
                 "deleted": len(expired),

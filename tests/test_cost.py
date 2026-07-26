@@ -13,14 +13,14 @@ from pathlib import Path
 
 from flume.analysis.cli import _cmd_cost
 from flume.store.base import SessionBundle
-from flume.store.sqlite import SqliteSessionStore
+from flume.store.sqlite import SqliteAnalyzedStore
 
 BASE_NS = 1_780_000_000 * 1_000_000_000
 
 
 def _args(**over):
     base = {"since": None, "source": None, "group_by": "model", "as_model": None,
-            "json": True, "store_url": None}
+            "json": True, "analyzed_store_url": None}
     base.update(over)
     return argparse.Namespace(**base)
 
@@ -53,7 +53,7 @@ def _by_group(rows):
 
 def test_priced_model_costs_are_cache_aware(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         # claude-opus-5 is $5/$25 per MTok; reads 0.1x input, writes 1.25x.
         _ingest(store, "s1", [_turn("s1", 0, "claude-opus-5",
                                     inp=1_000_000, out=1_000_000,
@@ -70,7 +70,7 @@ def test_zero_token_placeholder_turns_are_not_flagged_unpriced(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         _ingest(store, "s1", [_turn("s1", 0, "<synthetic>")])
         row = _by_group(_cmd_cost(store, _args()))["<synthetic>"]
     assert row["turns"] == 1
@@ -82,7 +82,7 @@ def test_unknown_model_with_real_usage_is_flagged(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         _ingest(store, "s1", [_turn("s1", 0, "some-unpriced-model", inp=500)])
         row = _by_group(_cmd_cost(store, _args()))["some-unpriced-model"]
     assert row["unpriced_turns"] == 1
@@ -92,7 +92,7 @@ def test_config_pricing_makes_a_model_costable(tmp_path: Path, monkeypatch) -> N
     config = tmp_path / "config.toml"
     config.write_text('[pricing]\n"local-x" = { input = 2.0, output = 8.0 }\n')
     monkeypatch.setenv("FLUME_CONFIG", str(config))
-    with SqliteSessionStore(tmp_path / "s.sqlite3") as store:
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
         _ingest(store, "s1", [_turn("s1", 0, "local-x", inp=1_000_000, out=1_000_000)])
         row = _by_group(_cmd_cost(store, _args()))["local-x"]
     assert row["unpriced_turns"] == 0

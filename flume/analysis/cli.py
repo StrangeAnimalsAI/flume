@@ -1,7 +1,7 @@
 """Analysis CLI over the session store.
 
 Designed for two readers: humans get aligned tables, agents get `--json`.
-Every subcommand is a thin call into SessionStore query methods, so any
+Every subcommand is a thin call into AnalyzedStore query methods, so any
 backend that implements the interface gets the whole CLI for free.
 
 Examples:
@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flume.store.base import CONTENT_KINDS, open_store
+from flume.store.base import CONTENT_KINDS, open_analyzed_store
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "func"):
         parser.print_help()
         return 2
-    with open_store(args.store_url) as store:
+    with open_analyzed_store(args.analyzed_store_url) as store:
         result = args.func(store, args)
     if args.json:
         json.dump(result, sys.stdout, indent=2, default=str)
@@ -52,7 +52,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Query the local agent session store.",
     )
     parser.add_argument(
-        "--store-url",
+        "--analyzed-store-url",
         default=None,
         help="Store URL (default: sqlite://~/.flume/store.sqlite3).",
     )
@@ -249,16 +249,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--path", type=Path, required=True, help="File or directory.")
     p.add_argument(
-        "--no-raw-archive",
+        "--no-raw-store",
         action="store_true",
-        help="Skip capturing raw file copies into the archive.",
+        help="Skip capturing original transcript bytes into the raw store.",
     )
-    p.add_argument("--archive-url", default=None)
+    p.add_argument("--raw-store-url", default=None)
     p.set_defaults(func=_cmd_ingest)
 
     p = sub.add_parser(
         "rebuild",
-        help="Re-ingest sessions built by an older pipeline (from raw archive).",
+        help="Re-ingest sessions built by an older pipeline (from the raw store).",
     )
     p.add_argument(
         "--stale",
@@ -268,7 +268,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--source")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--archive-url", default=None)
+    p.add_argument("--raw-store-url", default=None)
     p.set_defaults(func=_cmd_rebuild)
 
     p = sub.add_parser("sources", help="List registered source adapters.")
@@ -293,7 +293,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--source", default=None)
     p.set_defaults(func=_cmd_review)
 
-    p = sub.add_parser("raw", help="Raw archive: stats, versions, restore.")
+    p = sub.add_parser("raw", help="Raw store: stats, versions, restore.")
     raw_sub = p.add_subparsers(dest="raw_command", required=True)
     rp = raw_sub.add_parser("stats", help="Per-source blob counts and sizes.")
     rp.set_defaults(func=_cmd_raw_stats)
@@ -308,7 +308,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     rp.set_defaults(func=_cmd_raw_restore)
     for rp_parser in (p,):
-        rp_parser.add_argument("--archive-url", default=None)
+        rp_parser.add_argument("--raw-store-url", default=None)
 
     p = sub.add_parser("retention", help="Show or enforce retention policy.")
     ret_sub = p.add_subparsers(dest="retention_command", required=True)
@@ -318,7 +318,7 @@ def _parser() -> argparse.ArgumentParser:
     rp.add_argument("--dry-run", action="store_true")
     rp.set_defaults(func=_cmd_retention_run)
     for rp_parser in (p,):
-        rp_parser.add_argument("--archive-url", default=None)
+        rp_parser.add_argument("--raw-store-url", default=None)
         rp_parser.add_argument("--config", type=Path, default=None)
 
     return parser
@@ -572,17 +572,17 @@ def _cmd_audit_toolgaps(store, args) -> list[dict[str, Any]]:
 def _cmd_ingest(store, args) -> dict[str, Any]:
     from flume.ingest.write import ingest_path
     from flume.sources import get_adapter
-    from flume.store.archive import open_archive
+    from flume.store.raw import open_raw_store
 
     adapter = get_adapter(args.source)
     source = adapter.name
     files = _expand(args.path, source)
-    archive = None if args.no_raw_archive else open_archive(args.archive_url)
+    raw_store = None if args.no_raw_store else open_raw_store(args.raw_store_url)
     try:
         ingested, empty, failures = [], 0, []
         for f in files:
             try:
-                outcome = ingest_path(store, adapter, f, archive=archive)
+                outcome = ingest_path(store, adapter, f, raw_store=raw_store)
             except Exception as exc:  # noqa: BLE001 - keep batch going
                 failures.append({"path": str(f), "error": f"{type(exc).__name__}: {exc}"})
                 continue
@@ -591,28 +591,28 @@ def _cmd_ingest(store, args) -> dict[str, Any]:
             else:
                 ingested.append(outcome.session_id)
     finally:
-        if archive is not None:
-            archive.close()
+        if raw_store is not None:
+            raw_store.close()
     return {
         "source": source,
         "files": len(files),
         "ingested": len(ingested),
         "empty": empty,
         "failed": failures,
-        "raw_archived": not args.no_raw_archive,
+        "raw_archived": not args.no_raw_store,
     }
 
 
 def _cmd_rebuild(store, args) -> dict[str, Any]:
     from flume.ingest.write import rebuild_stale
-    from flume.store.archive import open_archive
+    from flume.store.raw import open_raw_store
 
     if not args.stale:
         raise SystemExit("rebuild requires --stale (the only mode implemented)")
-    with open_archive(args.archive_url) as archive:
+    with open_raw_store(args.raw_store_url) as raw_store:
         return rebuild_stale(
             store,
-            archive,
+            raw_store,
             source=args.source,
             limit=args.limit,
             dry_run=args.dry_run,
@@ -622,7 +622,7 @@ def _cmd_rebuild(store, args) -> dict[str, Any]:
 def _cmd_sql(_store, args) -> list[dict[str, Any]]:
     import sqlite3
 
-    from flume.store.base import DEFAULT_STORE_URL
+    from flume.store.base import DEFAULT_ANALYZED_STORE_URL
 
     query = args.query.strip().rstrip(";")
     head = query.split(None, 1)[0].lower() if query else ""
@@ -630,7 +630,7 @@ def _cmd_sql(_store, args) -> list[dict[str, Any]]:
         raise SystemExit(
             "sql: only read-only SELECT/WITH/PRAGMA/EXPLAIN queries are allowed"
         )
-    url = args.store_url or DEFAULT_STORE_URL
+    url = args.analyzed_store_url or DEFAULT_ANALYZED_STORE_URL
     path = url[len("sqlite://"):] if url.startswith("sqlite://") else url
     path = str(Path(path).expanduser())
     # main() already opened the store read-write (creating the view); this
@@ -673,30 +673,30 @@ def _cmd_sources(_store, _args) -> list[dict[str, Any]]:
 
 
 def _cmd_raw_stats(_store, args) -> list[dict[str, Any]]:
-    from flume.store.archive import open_archive
+    from flume.store.raw import open_raw_store
 
-    with open_archive(args.archive_url) as archive:
-        return archive.stats()
+    with open_raw_store(args.raw_store_url) as raw_store:
+        return raw_store.stats()
 
 
 def _cmd_raw_versions(_store, args) -> list[dict[str, Any]]:
     from dataclasses import asdict
 
-    from flume.store.archive import open_archive
+    from flume.store.raw import open_raw_store
 
-    with open_archive(args.archive_url) as archive:
-        return [asdict(v) for v in archive.versions(args.session_id)]
+    with open_raw_store(args.raw_store_url) as raw_store:
+        return [asdict(v) for v in raw_store.versions(args.session_id)]
 
 
 def _cmd_raw_restore(_store, args) -> dict[str, Any]:
-    from flume.store.archive import open_archive
+    from flume.store.raw import open_raw_store
 
-    with open_archive(args.archive_url) as archive:
-        versions = archive.versions(args.session_id)
+    with open_raw_store(args.raw_store_url) as raw_store:
+        versions = raw_store.versions(args.session_id)
         if not versions:
             raise SystemExit(f"no archived raw data for {args.session_id!r}")
         entry = versions[args.version]
-        out = archive.restore(entry, args.out.expanduser())
+        out = raw_store.restore(entry, args.out.expanduser())
     return {"restored": str(out), "sha256": entry.sha256, "bytes": entry.size_bytes}
 
 
@@ -707,16 +707,16 @@ def _cmd_retention_show(_store, args) -> dict[str, Any]:
 
 
 def _cmd_retention_run(store, args) -> dict[str, Any]:
-    from flume.store.archive import open_archive
+    from flume.store.raw import open_raw_store
     from flume.store.config import load_policy
     from flume.store.retention import run_retention
 
     from flume.sources import registered
 
-    with open_archive(args.archive_url) as archive:
+    with open_raw_store(args.raw_store_url) as raw_store:
         return run_retention(
             store=store,
-            archive=archive,
+            raw_store=raw_store,
             policy=load_policy(args.config),
             sources=[a.name for a in registered()],
             dry_run=args.dry_run,

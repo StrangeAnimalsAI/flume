@@ -1,4 +1,4 @@
-"""Retention configuration for the raw archive and analyzed store.
+"""Retention configuration for the raw store and analyzed store.
 
 Read from `~/.flume/config.toml` (override path with the
 FLUME_CONFIG env var). Durations are "forever" or `<N><unit>`

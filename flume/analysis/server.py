@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from flume.store.base import SessionStore, open_store
+from flume.store.base import AnalyzedStore, open_analyzed_store
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -42,15 +42,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8321)
     parser.add_argument(
-        "--store-url",
+        "--analyzed-store-url",
         default=None,
         help="Store URL (default: sqlite://~/.flume/store.sqlite3).",
     )
     args = parser.parse_args(argv)
 
-    store = open_store(args.store_url)
+    store = open_analyzed_store(args.analyzed_store_url)
     server = ThreadingHTTPServer(
-        (args.host, args.port), _handler_class(args.store_url)
+        (args.host, args.port), _handler_class(args.analyzed_store_url)
     )
     store.close()  # probe only; handlers open per-request connections
     if args.host not in ("127.0.0.1", "localhost", "::1"):
@@ -70,16 +70,16 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _handler_class(store_url: str | None):
+def _handler_class(analyzed_store_url: str | None):
     class Handler(_StoreHandler):
         pass
 
-    Handler.store_url = store_url
+    Handler.analyzed_store_url = analyzed_store_url
     return Handler
 
 
 class _StoreHandler(BaseHTTPRequestHandler):
-    store_url: str | None = None
+    analyzed_store_url: str | None = None
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         parsed = urlparse(self.path)
@@ -90,7 +90,7 @@ class _StoreHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path.startswith("/api/"):
                 # sqlite connections are cheap and per-thread; open per request.
-                with open_store(self.store_url, readonly=True) as store:
+                with open_analyzed_store(self.analyzed_store_url, readonly=True) as store:
                     payload = _route(store, parsed.path, query)
                 if payload is None:
                     self._send_json({"error": "not found"}, status=404)
@@ -131,7 +131,7 @@ class _StoreHandler(BaseHTTPRequestHandler):
 
 
 def _route(
-    store: SessionStore,
+    store: AnalyzedStore,
     path: str,
     query: dict[str, list[str]],
 ) -> Any:
@@ -203,13 +203,13 @@ def _route(
             since_ns=_since_ns(_q(query, "since") or "7d"),
             persist=False,
         )
-    if path == "/api/archive":
-        from flume.store.archive import open_archive
+    if path == "/api/raw_store":
+        from flume.store.raw import open_raw_store
         from flume.store.config import load_policy
 
-        with open_archive(None) as archive:
+        with open_raw_store(None) as raw_store:
             return {
-                "stats": archive.stats(),
+                "stats": raw_store.stats(),
                 "retention": load_policy().describe(),
             }
     if path == "/api/search":

@@ -1,9 +1,24 @@
-"""Storage interface for agent session data.
+"""The analyzed store: rows derived from parsing a transcript.
 
-A `SessionStore` persists one `SessionBundle` per session file and answers
+flume keeps two stores, distinguished by adjective rather than by two
+unrelated nouns:
+
+    RawStore       (flume/store/raw.py)  original transcript bytes,
+                                         gzipped and content-hashed,
+                                         written BEFORE anything is parsed
+    AnalyzedStore  (this module)         the relational + FTS5 rows built
+                                         from parsing those bytes
+
+They have independent lifetimes — `[retention]` sets a TTL for each — and
+the dependency runs one way: `rebuild_stale` re-reads the raw store to
+rebuild analyzed rows when the pipeline changes, which is why a mapper bug
+costs a rebuild rather than the data.
+
+An `AnalyzedStore` persists one `SessionBundle` per session file and answers
 the analysis queries the CLI/API expose. Implementations are pluggable via
-`open_store(url)`; the default is sqlite. A new backend (Postgres, DuckDB,
-a remote API) implements the abstract methods and registers a URL scheme.
+`open_analyzed_store(url)`; sqlite is the only built-in. A new one (Postgres,
+DuckDB, a remote API) implements the abstract methods and registers a URL
+scheme.
 
 Content rows are the full-fidelity layer: thinking blocks, complete tool
 arguments/results, and message texts that the OTel/Langfuse path truncates
@@ -51,8 +66,8 @@ class SessionBundle:
     contents: list[ContentRow] = field(default_factory=list)
 
 
-class SessionStore(ABC):
-    """Write + query interface every backend implements."""
+class AnalyzedStore(ABC):
+    """Write + query interface every implementation provides."""
 
     @abstractmethod
     def ingest_session(self, bundle: SessionBundle) -> None:
@@ -273,19 +288,19 @@ class StoreCapabilityError(TypeError):
 class SqlReadable(Protocol):
     """A store that answers ad-hoc SQL reads.
 
-    Why this exists rather than more `SessionStore` methods: the analysis
+    Why this exists rather than more `AnalyzedStore` methods: the analysis
     layer is inherently SQL-shaped. Its detectors aggregate over the
     session/turn/tool_call/content schema in shapes that barely repeat —
     window functions over turn gaps, FTS joins, per-tool error rates — so
-    promoting each to an interface method would grow `SessionStore` from
+    promoting each to an interface method would grow `AnalyzedStore` from
     seventeen methods to thirty-odd, nearly all with one caller. That
     makes a second backend *harder* to write, not easier: every
     implementer would owe bespoke aggregations they may never use.
 
-    Instead the boundary is explicit. `SessionStore` stays the portable
+    Instead the boundary is explicit. `AnalyzedStore` stays the portable
     contract — ingest, fetch, search, the rollups the CLI and API need —
     and analytics declare this narrower extra requirement by name. A
-    backend that cannot answer SQL implements `SessionStore` and skips
+    backend that cannot answer SQL implements `AnalyzedStore` and skips
     this; `require_sql` then fails with a clear message instead of an
     AttributeError against a private helper.
     """
@@ -307,19 +322,19 @@ def require_sql(store: object, feature: str) -> SqlReadable:
     return store
 
 
-DEFAULT_STORE_URL = "sqlite://~/.flume/store.sqlite3"
+DEFAULT_ANALYZED_STORE_URL = "sqlite://~/.flume/store.sqlite3"
 
 
-def open_store(url: str | None = None, *, readonly: bool = False) -> SessionStore:
+def open_analyzed_store(url: str | None = None, *, readonly: bool = False) -> AnalyzedStore:
     """Open a store by URL. `sqlite://<path>` is the only built-in scheme.
 
     `readonly=True` opens a pure reader: no migrations, no schema DDL, no
     write locks. The database must already exist."""
-    resolved = url or DEFAULT_STORE_URL
+    resolved = url or DEFAULT_ANALYZED_STORE_URL
     if resolved.startswith("sqlite://"):
-        from flume.store.sqlite import SqliteSessionStore
+        from flume.store.sqlite import SqliteAnalyzedStore
 
-        return SqliteSessionStore(resolved[len("sqlite://") :], readonly=readonly)
+        return SqliteAnalyzedStore(resolved[len("sqlite://") :], readonly=readonly)
     raise ValueError(
         f"unsupported store url {resolved!r}; expected sqlite://<path>"
     )

@@ -17,14 +17,14 @@ from pathlib import Path
 
 from flume.analysis.insights import run_insights
 from flume.store.base import ContentRow, SessionBundle
-from flume.store.sqlite import SqliteSessionStore
+from flume.store.sqlite import SqliteAnalyzedStore
 
 SEC_NS = 1_000_000_000
 BASE_NS = 1_780_000_000 * SEC_NS  # 2026-06-08
 
 
-def _store(tmp_path: Path) -> SqliteSessionStore:
-    return SqliteSessionStore(tmp_path / "store.sqlite3")
+def _store(tmp_path: Path) -> SqliteAnalyzedStore:
+    return SqliteAnalyzedStore(tmp_path / "store.sqlite3")
 
 
 def _ingest(

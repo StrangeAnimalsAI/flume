@@ -272,9 +272,9 @@ def test_cli_once_with_fake_source_persists_success(
             str(transcript.parent),
             "--state-db",
             str(state_db),
-            "--store-url",
+            "--analyzed-store-url",
             f"sqlite://{tmp_path}/store.sqlite3",
-            "--no-raw-archive",
+            "--no-raw-store",
             "--quiet-seconds",
             "5",
         ]

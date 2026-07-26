@@ -5,10 +5,10 @@ Three entry points:
 - `ingest_path(store, adapter, path, ...)` ingests one file through an
   explicit `SourceAdapter`. Raw capture happens BEFORE parsing: even a
   file the mapper cannot handle yet is preserved durably.
-- `store_ingest_function(adapter, store, archive)` wraps `ingest_path`
+- `store_ingest_function(adapter, store, raw_store)` wraps `ingest_path`
   as an IngestFunction so the discover/quiet/fingerprint state machine
   drives the store sink.
-- `rebuild_stale(store, archive, ...)` re-ingests sessions built by an
+- `rebuild_stale(store, raw_store, ...)` re-ingests sessions built by an
   older pipeline version, resolving each session's recorded source name
   through the adapter registry.
 
@@ -24,18 +24,18 @@ from typing import Any, Callable
 
 from flume.ingest.runner import IngestOutcome, IngestRequest
 from flume.sources import SourceAdapter, get_adapter
-from flume.store.archive import RawArchive, sha256_file
-from flume.store.base import SessionStore
+from flume.store.raw import RawStore, sha256_file
+from flume.store.base import AnalyzedStore
 from flume.store.bundle import PIPELINE_VERSION, bundle_from_spans
 
 
 def ingest_path(
-    store: SessionStore,
+    store: AnalyzedStore,
     adapter: SourceAdapter,
     path: Path,
     metadata: dict[str, Any] | None = None,
     *,
-    archive: RawArchive | None = None,
+    raw_store: RawStore | None = None,
 ) -> IngestOutcome | None:
     """Archive + map + extract + persist one session file.
 
@@ -53,11 +53,11 @@ def ingest_path(
         # Probe/mapper failure must not cost us the raw data: archive under
         # the filename stem, then re-raise so the state machine records the
         # failure for retry once the parser is fixed.
-        _capture(archive, adapter.name, path.stem, path)
+        _capture(raw_store, adapter.name, path.stem, path)
         raise
     root = spans[0] if spans else {}
     session_id = (root.get("attributes") or {}).get("session.id") or path.stem
-    _capture(archive, adapter.name, session_id, path)
+    _capture(raw_store, adapter.name, session_id, path)
 
     if not spans:
         return None
@@ -79,24 +79,24 @@ def ingest_path(
 
 
 def _capture(
-    archive: RawArchive | None,
+    raw_store: RawStore | None,
     source: str,
     session_id: str,
     path: Path,
 ) -> None:
-    if archive is None:
+    if raw_store is None:
         return
     try:
         mtime_ns = path.stat().st_mtime_ns
     except OSError:
         mtime_ns = None
-    archive.capture(source, session_id, path, mtime_ns=mtime_ns)
+    raw_store.capture(source, session_id, path, mtime_ns=mtime_ns)
 
 
 def store_ingest_function(
     adapter: SourceAdapter,
-    store: SessionStore,
-    archive: RawArchive | None = None,
+    store: AnalyzedStore,
+    raw_store: RawStore | None = None,
 ) -> Callable[[IngestRequest], IngestOutcome | None]:
     """Adapt `ingest_path` to the auto-ingest runner's IngestFunction."""
 
@@ -106,15 +106,15 @@ def store_ingest_function(
         # the file EMPTY — distinct from success, retryable when parsers
         # improve. The raw bytes are already archived either way.
         return ingest_path(
-            store, adapter, request.transcript.path, metadata, archive=archive
+            store, adapter, request.transcript.path, metadata, raw_store=raw_store
         )
 
     return ingest
 
 
 def rebuild_stale(
-    store: SessionStore,
-    archive: RawArchive,
+    store: AnalyzedStore,
+    raw_store: RawStore,
     *,
     source: str | None = None,
     limit: int | None = None,
@@ -123,7 +123,7 @@ def rebuild_stale(
     """Re-ingest sessions whose rows were built by an older pipeline.
 
     Bytes come from the original file when it still exists, else from the
-    latest raw-archive version — so a rebuild works even after the vendor
+    latest raw-store version — so a rebuild works even after the vendor
     app pruned its transcripts. The session's stored metadata is replayed,
     preserving probe results (parent links, cwd) that a restored temp file
     could not re-derive."""
@@ -151,13 +151,13 @@ def rebuild_stale(
             original = Path(row["file_path"]) if row.get("file_path") else None
             if original is not None and original.is_file():
                 outcome = ingest_path(
-                    store, adapter, original, metadata, archive=archive
+                    store, adapter, original, metadata, raw_store=raw_store
                 )
                 from_original += 1
             else:
                 # Source-scoped: a claude/codex id collision must never
                 # rebuild one source's session from the other's bytes.
-                versions = archive.versions(session_id, source=row["source"])
+                versions = raw_store.versions(session_id, source=row["source"])
                 if not versions:
                     missing_raw.append(session_id)
                     continue
@@ -166,7 +166,7 @@ def rebuild_stale(
                     # Keep the original filename: session_id fallback and
                     # source probes key off the path's stem/shape.
                     name = Path(entry.original_path).name or f"{session_id}.jsonl"
-                    restored = archive.restore(entry, Path(tmp) / name)
+                    restored = raw_store.restore(entry, Path(tmp) / name)
                     outcome = ingest_path(store, adapter, restored, metadata)
                 from_archive += 1
             if outcome is None:

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from flume.analysis.cli import main
-from flume.store.base import open_store
+from flume.store.base import open_analyzed_store
 from flume.store.taxonomy import tool_kind, tool_vendor
 
 
@@ -37,7 +37,7 @@ def _insert(store, span, name, chars) -> None:
 
 
 def test_view_matches_python_and_estimates_tokens(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/s.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/s.sqlite3") as store:
         _insert(store, "a", "mcp__linear__save_issue", 400)
         _insert(store, "b", "exec_command", 4000)
         rows = {r["name"]: r for r in store.rows(
@@ -53,12 +53,12 @@ def test_view_matches_python_and_estimates_tokens(tmp_path: Path) -> None:
 
 def test_sql_command_is_read_only(tmp_path: Path, capsys) -> None:
     db = f"sqlite://{tmp_path}/s.sqlite3"
-    with open_store(db) as store:
+    with open_analyzed_store(db) as store:
         _insert(store, "a", "Bash", 8)
 
-    assert main(["--store-url", db, "--json", "sql",
+    assert main(["--analyzed-store-url", db, "--json", "sql",
                  "SELECT kind FROM tool_calls_ext"]) == 0
     assert "shell" in capsys.readouterr().out
 
     with pytest.raises(SystemExit, match="read-only"):
-        main(["--store-url", db, "sql", "DELETE FROM sessions"])
+        main(["--analyzed-store-url", db, "sql", "DELETE FROM sessions"])

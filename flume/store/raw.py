@@ -1,7 +1,7 @@
-"""Durable raw archive: immutable copies of source session files.
+"""Durable raw store: immutable copies of source session files.
 
 The analyzed store can always be rebuilt; the raw files cannot — the agent
-apps prune them on their own schedule. The archive captures each ingested
+apps prune them on their own schedule. The raw store captures each ingested
 file as a gzip blob plus a manifest row, versioned by content hash: if a
 session file grows and is re-ingested, a new version is captured and the
 old one kept (retention decides how long).
@@ -12,7 +12,7 @@ Layout (filesystem backend, default `~/.flume/raw`):
       manifest.sqlite3
       blobs/<source>/<YYYY-MM>/<session_id>.<sha8>.jsonl.gz
 
-Pluggable like the session store: `open_archive(url)` with `file://<dir>`.
+Pluggable like the session store: `open_raw_store(url)` with `file://<dir>`.
 A future S3/remote backend implements the same interface.
 """
 from __future__ import annotations
@@ -43,8 +43,8 @@ class ArchiveEntry:
     captured_at_ns: int
 
 
-class RawArchive(ABC):
-    """Write-once raw file archive with content-hash versioning."""
+class RawStore(ABC):
+    """Write-once store of original transcript bytes, content-hash versioned."""
 
     @abstractmethod
     def capture(
@@ -84,21 +84,21 @@ class RawArchive(ABC):
     @abstractmethod
     def close(self) -> None: ...
 
-    def __enter__(self) -> "RawArchive":
+    def __enter__(self) -> "RawStore":
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
 
 
-DEFAULT_ARCHIVE_URL = "file://~/.flume/raw"
+DEFAULT_RAW_STORE_URL = "file://~/.flume/raw"
 
 
-def open_archive(url: str | None = None) -> RawArchive:
-    resolved = url or DEFAULT_ARCHIVE_URL
+def open_raw_store(url: str | None = None) -> RawStore:
+    resolved = url or DEFAULT_RAW_STORE_URL
     if resolved.startswith("file://"):
         return FsRawArchive(resolved[len("file://") :])
-    raise ValueError(f"unsupported archive url {resolved!r}; expected file://<dir>")
+    raise ValueError(f"unsupported raw store url {resolved!r}; expected file://<dir>")
 
 
 _MANIFEST_SCHEMA = """
@@ -150,7 +150,7 @@ def _fs_name(value: str) -> str:
     return safe or "_"
 
 
-class FsRawArchive(RawArchive):
+class FsRawArchive(RawStore):
     def __init__(self, root: str | Path) -> None:
         self.root = Path(str(root)).expanduser()
         self.blob_root = self.root / "blobs"
@@ -200,7 +200,7 @@ class FsRawArchive(RawArchive):
         )
         blob = self.blob_root / rel
         if not blob.resolve().is_relative_to(self.blob_root.resolve()):
-            raise ValueError(f"blob path escapes archive root: {rel}")
+            raise ValueError(f"blob path escapes raw_store root: {rel}")
         blob.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         _compress_to(path, blob)
 
@@ -248,7 +248,7 @@ class FsRawArchive(RawArchive):
         sha = hashlib.sha256(data).hexdigest()
         if sha != entry.sha256:
             raise ValueError(
-                f"archive blob corrupt for {entry.session_id}: "
+                f"raw store blob corrupt for {entry.session_id}: "
                 f"sha256 {sha[:12]}... != manifest {entry.sha256[:12]}..."
             )
         dest.write_bytes(data)

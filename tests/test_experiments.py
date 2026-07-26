@@ -12,7 +12,7 @@ from __future__ import annotations
 from flume.analysis.experiments import compare_experiment
 from flume.analysis.navtime import classify_tool, session_nav_shares
 from flume.store.base import ContentRow, SessionBundle
-from flume.store.sqlite import SqliteSessionStore
+from flume.store.sqlite import SqliteAnalyzedStore
 
 HOUR_NS = 3600 * 1_000_000_000
 BASE_NS = 1_780_000_000 * 1_000_000_000  # 2026-06-08
@@ -85,8 +85,8 @@ def _call(session_id, index, at_ns, name, args_preview, result_chars=1000):
     }
 
 
-def _store(tmp_path) -> SqliteSessionStore:
-    return SqliteSessionStore(tmp_path / "store.sqlite3")
+def _store(tmp_path) -> SqliteAnalyzedStore:
+    return SqliteAnalyzedStore(tmp_path / "store.sqlite3")
 
 
 def _session_row(store, session_id) -> dict:

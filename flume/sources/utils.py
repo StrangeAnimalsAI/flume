@@ -38,7 +38,7 @@ def is_nav_shell(args_preview: str | None) -> bool:
 # which failed ingest outright with "OverflowError: string longer than
 # INT_MAX bytes" (json rejects strings past INT_MAX) after buffering
 # gigabytes to get there. Oversized lines are skipped and never held whole;
-# the raw archive keeps the original bytes, which is what that layer is for.
+# the raw store keeps the original bytes, which is what that layer is for.
 MAX_LINE_BYTES = 64 * 1024 * 1024
 _CHUNK_BYTES = 1 << 20
 

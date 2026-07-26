@@ -12,7 +12,7 @@ from pathlib import Path
 
 from flume.ingest.write import ingest_path
 from flume.sources import get_adapter
-from flume.store.base import open_store
+from flume.store.base import open_analyzed_store
 
 THINKING_1 = "I should read the file before editing; the bug is in parse()."
 THINKING_2 = "The test failure suggests a missing null check in loader.py."
@@ -184,7 +184,7 @@ def _ingest_codex(store, tmp_path: Path):
 
 
 def test_thinking_blocks_stored_in_full(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         thinking = store.get_contents("sess-claude-1", kinds=["thinking"])
 
@@ -194,7 +194,7 @@ def test_thinking_blocks_stored_in_full(tmp_path: Path) -> None:
 
 
 def test_tool_result_not_truncated(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         results = store.get_contents("sess-claude-1", kinds=["tool_result"])
 
@@ -203,7 +203,7 @@ def test_tool_result_not_truncated(tmp_path: Path) -> None:
 
 
 def test_session_rollup_metrics(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         session = store.get_session("sess-claude-1")
 
@@ -227,7 +227,7 @@ def test_session_rollup_metrics(tmp_path: Path) -> None:
 
 
 def test_codex_ingest_and_reasoning_absent(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         outcome = _ingest_codex(store, tmp_path)
         assert outcome is not None
         session = store.get_session("codex-sess-1")
@@ -243,7 +243,7 @@ def test_codex_ingest_and_reasoning_absent(tmp_path: Path) -> None:
 
 
 def test_reingest_replaces_rows(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         _ingest_claude(store, tmp_path)  # same session again
 
@@ -262,7 +262,7 @@ def test_duplicate_event_uuid_dedupes_to_last(tmp_path: Path) -> None:
     path = tmp_path / "sess-dup.jsonl"
     _write_jsonl(path, events)
 
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         assert ingest_path(store, get_adapter("claude-code"), path) is not None
         session = store.get_session("sess-dup")
 
@@ -272,7 +272,7 @@ def test_duplicate_event_uuid_dedupes_to_last(tmp_path: Path) -> None:
 
 
 def test_search_finds_thinking_text(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         _ingest_codex(store, tmp_path)
 
@@ -287,7 +287,7 @@ def test_search_finds_thinking_text(tmp_path: Path) -> None:
 
 
 def test_tool_and_token_stats(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         _ingest_codex(store, tmp_path)
 
@@ -314,7 +314,7 @@ def test_session_hierarchy_and_project(tmp_path: Path) -> None:
     _write_jsonl(parent_path, _claude_events())
     _write_jsonl(child_path, _claude_events())
 
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         ingest_path(store, get_adapter("claude-code"), parent_path, {"cwd": "/Users/alex/Code/demo"})
         ingest_path(store, get_adapter("claude-code"), child_path, {"cwd": "/Users/alex/Code/demo"})
 
@@ -356,7 +356,7 @@ def test_session_commands_segmentation(tmp_path: Path) -> None:
     path = tmp_path / "sess-cmd.jsonl"
     _write_jsonl(path, events)
 
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         ingest_path(store, get_adapter("claude-code"), path)
         commands = store.session_commands("sess-cmd")
 
@@ -427,7 +427,7 @@ def test_audit_repeats_flags_byte_identical(tmp_path: Path) -> None:
     path = tmp_path / "sess-rep.jsonl"
     _write_jsonl(path, events)
 
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         ingest_path(store, get_adapter("claude-code"), path)
         repeats = store.audit_repeats()
 
@@ -438,7 +438,7 @@ def test_audit_repeats_flags_byte_identical(tmp_path: Path) -> None:
 
 
 def test_audit_whole_file_reads(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)  # fixture Read has no offset, 70k result
         rows = store.audit_whole_file_reads(min_chars=50_000)
         assert len(rows) == 1
@@ -488,7 +488,7 @@ def test_insights_detect_and_persist(tmp_path: Path) -> None:
     path = tmp_path / "sess-flaky.jsonl"
     _write_jsonl(path, events)
 
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         ingest_path(store, get_adapter("claude-code"), path)
         findings = run_insights(store)
         kinds = {f["kind"] for f in findings}
@@ -555,7 +555,7 @@ def test_insights_schema_loop_detects_distinct_payload_retries(
     path = tmp_path / "sess-schema-loop.jsonl"
     _write_jsonl(path, events)
 
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         ingest_path(store, get_adapter("claude-code"), path)
         findings = run_insights(store)
 
@@ -571,7 +571,7 @@ def test_insights_schema_loop_detects_distinct_payload_retries(
 
 
 def test_list_sessions_filters(tmp_path: Path) -> None:
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         _ingest_claude(store, tmp_path)
         _ingest_codex(store, tmp_path)
 

@@ -1,4 +1,4 @@
-"""Tests for the raw archive, retention cycle, and source-adapter registry."""
+"""Tests for the raw raw_store, retention cycle, and source-adapter registry."""
 from __future__ import annotations
 
 import json
@@ -8,8 +8,8 @@ import pytest
 
 from flume.ingest.write import ingest_path
 from flume.sources import get_adapter
-from flume.store.archive import open_archive
-from flume.store.base import open_store
+from flume.store.raw import open_raw_store
+from flume.store.base import open_analyzed_store
 from flume.store.config import (
     RetentionPolicy,
     load_policy,
@@ -150,15 +150,15 @@ def test_config_source_errors_name_the_problem(tmp_path, monkeypatch) -> None:
         get_adapter("empty")
 
 
-# -- archive ----------------------------------------------------------------
+# -- raw_store ----------------------------------------------------------------
 
 
 def test_capture_restore_roundtrip(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
-    with open_archive(f"file://{tmp_path}/raw") as archive:
-        entry = archive.capture("claude-code", "sess-1", src)
+    with open_raw_store(f"file://{tmp_path}/raw") as raw_store:
+        entry = raw_store.capture("claude-code", "sess-1", src)
         assert entry is not None
-        restored = archive.restore(entry, tmp_path / "restored.jsonl")
+        restored = raw_store.restore(entry, tmp_path / "restored.jsonl")
 
     assert restored.read_bytes() == src.read_bytes()
 
@@ -167,25 +167,25 @@ def test_capture_dedupes_identical_content_and_versions_changes(
     tmp_path: Path,
 ) -> None:
     src = _write_session(tmp_path)
-    with open_archive(f"file://{tmp_path}/raw") as archive:
-        assert archive.capture("claude-code", "sess-1", src) is not None
-        assert archive.capture("claude-code", "sess-1", src) is None  # same bytes
+    with open_raw_store(f"file://{tmp_path}/raw") as raw_store:
+        assert raw_store.capture("claude-code", "sess-1", src) is not None
+        assert raw_store.capture("claude-code", "sess-1", src) is None  # same bytes
 
         src.write_text(src.read_text() + "\n")  # file grew
-        assert archive.capture("claude-code", "sess-1", src) is not None
-        assert len(archive.versions("sess-1")) == 2
+        assert raw_store.capture("claude-code", "sess-1", src) is not None
+        assert len(raw_store.versions("sess-1")) == 2
 
 
 def test_ingest_path_archives_raw(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
     with (
-        open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
-        open_archive(f"file://{tmp_path}/raw") as archive,
+        open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
+        open_raw_store(f"file://{tmp_path}/raw") as raw_store,
     ):
-        outcome = ingest_path(store, get_adapter("claude-code"), src, archive=archive)
+        outcome = ingest_path(store, get_adapter("claude-code"), src, raw_store=raw_store)
         assert outcome is not None and outcome.session_id == "sess-1"
-        assert len(archive.versions("sess-1")) == 1
-        assert archive.stats()[0]["source"] == "claude-code"
+        assert len(raw_store.versions("sess-1")) == 1
+        assert raw_store.stats()[0]["source"] == "claude-code"
 
 
 def test_mapper_failure_still_archives_raw(tmp_path: Path) -> None:
@@ -195,19 +195,19 @@ def test_mapper_failure_still_archives_raw(tmp_path: Path) -> None:
         raise OverflowError("string longer than INT_MAX bytes")
 
     # Passed straight in: what's under test is the write path's ordering
-    # (archive before parse), not how the adapter was looked up.
+    # (raw_store before parse), not how the adapter was looked up.
     adapter = SourceAdapter(
         name="boom", map_spans=boom,
         extract_contents=lambda p, s: [],
     )
     src = _write_session(tmp_path, session_id="giant")
     with (
-        open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
-        open_archive(f"file://{tmp_path}/raw") as archive,
+        open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
+        open_raw_store(f"file://{tmp_path}/raw") as raw_store,
     ):
         with pytest.raises(OverflowError):
-            ingest_path(store, adapter, src, archive=archive)
-        assert len(archive.versions("giant")) == 1  # raw survived the crash
+            ingest_path(store, adapter, src, raw_store=raw_store)
+        assert len(raw_store.versions("giant")) == 1  # raw survived the crash
 
 
 # -- retention config ---------------------------------------------------------
@@ -252,11 +252,11 @@ def test_missing_config_means_keep_forever(tmp_path: Path) -> None:
 def test_retention_deletes_expired_tiers_only(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
     with (
-        open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
-        open_archive(f"file://{tmp_path}/raw") as archive,
+        open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
+        open_raw_store(f"file://{tmp_path}/raw") as raw_store,
     ):
-        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
-        entry = archive.versions("sess-1")[0]
+        ingest_path(store, get_adapter("claude-code"), src, raw_store=raw_store)
+        entry = raw_store.versions("sess-1")[0]
         # Session ended 2026-04-20; blob captured "now" (test runtime).
         session = store.get_session("sess-1")
         assert session is not None
@@ -269,7 +269,7 @@ def test_retention_deletes_expired_tiers_only(tmp_path: Path) -> None:
 
         report = run_retention(
             store=store,
-            archive=archive,
+            raw_store=raw_store,
             policy=policy,
             sources=ALL_SOURCES,
             now_ns=now_ns,
@@ -279,21 +279,21 @@ def test_retention_deletes_expired_tiers_only(tmp_path: Path) -> None:
         assert store.get_session("sess-1") is not None  # dry run deletes nothing
 
         report = run_retention(
-            store=store, archive=archive, policy=policy, sources=ALL_SOURCES, now_ns=now_ns
+            store=store, raw_store=raw_store, policy=policy, sources=ALL_SOURCES, now_ns=now_ns
         )
         assert report["analyzed"]["claude-code"]["deleted"] == 1
         assert store.get_session("sess-1") is None  # analyzed pruned
-        assert archive.versions("sess-1") == [entry]  # raw kept forever
+        assert raw_store.versions("sess-1") == [entry]  # raw kept forever
 
 
 def test_retention_deletes_expired_raw_blobs(tmp_path: Path) -> None:
     src = _write_session(tmp_path)
     with (
-        open_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
-        open_archive(f"file://{tmp_path}/raw") as archive,
+        open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store,
+        open_raw_store(f"file://{tmp_path}/raw") as raw_store,
     ):
-        ingest_path(store, get_adapter("claude-code"), src, archive=archive)
-        entry = archive.versions("sess-1")[0]
+        ingest_path(store, get_adapter("claude-code"), src, raw_store=raw_store)
+        entry = raw_store.versions("sess-1")[0]
         blob = Path(f"{tmp_path}/raw/blobs") / entry.blob_path
         assert blob.is_file()
 
@@ -301,22 +301,22 @@ def test_retention_deletes_expired_raw_blobs(tmp_path: Path) -> None:
         now_ns = entry.captured_at_ns + 2 * DAY_NS
 
         report = run_retention(
-            store=store, archive=archive, policy=policy, sources=ALL_SOURCES, now_ns=now_ns
+            store=store, raw_store=raw_store, policy=policy, sources=ALL_SOURCES, now_ns=now_ns
         )
         assert report["raw"]["claude-code"]["deleted"] == 1
-        assert archive.versions("sess-1") == []
+        assert raw_store.versions("sess-1") == []
         assert not blob.exists()
         # Analyzed tier untouched (default forever).
         assert store.get_session("sess-1") is not None
 
 
 def test_archive_capture_sanitizes_hostile_session_ids(tmp_path: Path) -> None:
-    from flume.store.archive import FsRawArchive
+    from flume.store.raw import FsRawArchive
 
     src = tmp_path / "t.jsonl"
     src.write_text('{"x": 1}\n')
-    archive = FsRawArchive(tmp_path / "raw")
-    entry = archive.capture("claude-code", "../../../../tmp/escape", src)
+    raw_store = FsRawArchive(tmp_path / "raw")
+    entry = raw_store.capture("claude-code", "../../../../tmp/escape", src)
     assert entry is not None
     blob = tmp_path / "raw" / "blobs" / entry.blob_path
     assert blob.resolve().is_relative_to((tmp_path / "raw" / "blobs").resolve())

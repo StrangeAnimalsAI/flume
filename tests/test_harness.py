@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from flume.harness.agent import run_session
 from flume.ingest.write import ingest_path
 from flume.sources import get_adapter
-from flume.store.base import open_store
+from flume.store.base import open_analyzed_store
 
 THINKING_1 = "The store schema suggests checking retention.py first."
 THINKING_2 = "The config default explains the skipped blobs."
@@ -124,7 +124,7 @@ def test_harness_transcript_ingests_with_thinking(tmp_path: Path) -> None:
         client=_scripted_client(),
         echo=False,
     )
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         outcome = ingest_path(store, get_adapter("harness"), path)
         assert outcome is not None
         session = store.get_session(outcome.session_id)
@@ -232,7 +232,7 @@ def _run_sdk(tmp_path: Path) -> Path:
 
 def test_sdk_backend_ingests_thinking_and_attributes_totals(tmp_path: Path) -> None:
     path = _run_sdk(tmp_path)
-    with open_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
         outcome = ingest_path(store, get_adapter("harness"), path)
         assert outcome is not None
         assert outcome.session_id.startswith("harness-")
