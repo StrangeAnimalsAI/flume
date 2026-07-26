@@ -99,8 +99,8 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Source adapter to ingest: claude-code, codex, or a vendor "
-            "alias when unambiguous (openai). 'fake' is a test fixture "
-            "source and needs --fake-root."
+            "alias when only one source declares it (openai, anthropic). "
+            "'fake' is a test fixture source and needs --fake-root."
         ),
     )
     parser.add_argument(

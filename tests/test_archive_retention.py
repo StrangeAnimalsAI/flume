@@ -52,11 +52,46 @@ def _write_session(tmp_path: Path, session_id: str = "sess-1", extra: str = "") 
 def test_adapter_resolves_by_name_and_vendor() -> None:
     assert get_adapter("claude-code").vendor == "anthropic"
     assert get_adapter("openai").name == "codex"
-    # Two anthropic-vendor sources (claude-code, harness): alias is ambiguous.
-    with pytest.raises(ValueError, match="ambiguous"):
-        get_adapter("anthropic")
+    # The harness declares no vendor — it runs whichever backend it is
+    # pointed at — so "anthropic" is unambiguous and means Claude Code.
+    assert get_adapter("harness").vendor is None
+    assert get_adapter("anthropic").name == "claude-code"
     with pytest.raises(ValueError, match="unknown source"):
         get_adapter("gemini")
+
+
+def test_vendor_alias_is_ambiguous_when_two_sources_share_one(
+    tmp_path, monkeypatch
+) -> None:
+    """Kept from when claude-code and harness both claimed anthropic: a
+    vendor shared by two sources must refuse to guess."""
+    (tmp_path / "rival.py").write_text(
+        "from flume.sources import SourceAdapter\n"
+        "ADAPTER = SourceAdapter(name='rival', vendor='anthropic',\n"
+        "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[sources]\n"rival" = { vendor = "anthropic", module = "rival" }\n'
+    )
+    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
+    with pytest.raises(ValueError, match="ambiguous"):
+        get_adapter("anthropic")
+
+
+def test_a_source_may_declare_no_vendor(tmp_path, monkeypatch) -> None:
+    """`vendor` is optional in config too — nothing computes from it."""
+    (tmp_path / "vendorless.py").write_text(
+        "from flume.sources import SourceAdapter\n"
+        "ADAPTER = SourceAdapter(name='vendorless',\n"
+        "    map_spans=lambda p: [], extract_contents=lambda p, s: [])\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[sources]\n"vendorless" = { module = "vendorless" }\n')
+    monkeypatch.setenv("FLUME_CONFIG", str(cfg))
+    assert get_adapter("vendorless").vendor is None
 
 
 def test_registry_lists_sources_without_importing_them() -> None:

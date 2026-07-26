@@ -40,8 +40,8 @@ Contract notes:
 
 The registry is data, not code — the same treatment `flume.pricing` gives
 model rates. `_DEFAULTS` below ships the sources flume knows, and each
-entry is just a name, a vendor, and a module path; nothing is imported
-until `get_adapter()` actually resolves to it. A `[sources]` table in
+entry is just a name, a module path, and an optional vendor; nothing is
+imported until `get_adapter()` resolves to it. A `[sources]` table in
 `~/.flume/config.toml` adds or overrides entries, so a third-party source
 needs no edit to flume:
 
@@ -79,9 +79,15 @@ class SourceAdapter:
     """How to read one vendor's transcript format. Pure functions of a file."""
 
     name: str  # canonical source name, e.g. "claude-code"
-    vendor: str  # model vendor, e.g. "anthropic"
     map_spans: Callable[[Path], list[Span]]
     extract_contents: Callable[[Path, str], list[ContentRow]]
+    # Model vendor, only when the source has a fixed one: Claude Code is
+    # always Anthropic, Codex always OpenAI. None when the vendor is a
+    # per-run property — the harness drives whichever backend it is pointed
+    # at, so a fixed label here is a claim its own sessions contradict.
+    # Nothing computes from this: costing keys on the model string and tool
+    # categorization keys on the source. It is an alias and a label.
+    vendor: str | None = None
     probe: Callable[[Path], dict[str, Any]] | None = None
     classify_tool: Callable[[str | None, str | None], str] | None = None
 
@@ -117,7 +123,7 @@ class SourceInfo:
     """
 
     name: str
-    vendor: str
+    vendor: str | None
     module: str
     # Everything else from the source's config table — discovery roots and
     # whatever else its `make_source` understands. Empty for shipped sources,
@@ -130,7 +136,8 @@ _DEFAULTS: dict[str, SourceInfo] = {
         "claude-code", "anthropic", "flume.sources.claude_code"
     ),
     "codex": SourceInfo("codex", "openai", "flume.sources.codex"),
-    "harness": SourceInfo("harness", "anthropic", "flume.sources.harness"),
+    # No vendor: the harness runs whichever backend it is pointed at.
+    "harness": SourceInfo("harness", None, "flume.sources.harness"),
 }
 
 # Merged registry, memoized against the config file's identity + mtime so a
@@ -168,16 +175,20 @@ def _registry() -> dict[str, SourceInfo]:
 def _parse_entry(name: str, spec: object) -> SourceInfo:
     if not isinstance(spec, dict):
         raise ValueError(
-            f"bad [sources] entry for {name!r}: expected a table with "
-            "`vendor` and `module`"
+            f"bad [sources] entry for {name!r}: expected a table with a "
+            "`module` path (and optionally `vendor`)"
         )
-    missing = {"vendor", "module"} - set(spec)
+    missing = {"module"} - set(spec)
     if missing:
         raise ValueError(
             f"[sources] entry {name!r} is missing {', '.join(sorted(missing))}"
         )
     options = {k: v for k, v in spec.items() if k not in ("vendor", "module")}
-    return SourceInfo(name, str(spec["vendor"]), str(spec["module"]), options)
+    vendor = spec.get("vendor")
+    return SourceInfo(
+        name, str(vendor) if vendor is not None else None,
+        str(spec["module"]), options,
+    )
 
 
 def registered() -> list[SourceInfo]:
@@ -220,7 +231,10 @@ def resolve(name_or_vendor: str) -> SourceInfo:
     entries = _registry()
     info = entries.get(name_or_vendor)
     if info is None:
-        by_vendor = [e for e in entries.values() if e.vendor == name_or_vendor]
+        by_vendor = [
+            e for e in entries.values()
+            if e.vendor is not None and e.vendor == name_or_vendor
+        ]
         if len(by_vendor) == 1:
             info = by_vendor[0]
         elif len(by_vendor) > 1:

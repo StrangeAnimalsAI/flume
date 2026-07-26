@@ -252,7 +252,9 @@ def test_sdk_backend_ingests_thinking_and_attributes_totals(tmp_path: Path) -> N
 
 def test_adapter_resolves_and_probes(tmp_path: Path) -> None:
     adapter = get_adapter("harness")
-    assert adapter.vendor == "anthropic"
+    # No fixed vendor: the same adapter reads runs driven by Anthropic, an
+    # OpenAI-compatible server, or a local model. `model` carries the truth.
+    assert adapter.vendor is None
 
     path = run_session(
         "hi", transcript_dir=tmp_path, client=_scripted_client(), echo=False
