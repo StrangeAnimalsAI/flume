@@ -13,7 +13,49 @@ fidelity in a store with a stable query interface instead.
 
 ## Architecture
 
-Three layers, each independently rebuildable:
+```mermaid
+flowchart TB
+    subgraph disk["Agent transcripts on disk"]
+        CC["Claude Code<br/>~/.claude/projects"]
+        CX["Codex<br/>~/.codex/sessions"]
+        HN["flume harness<br/>traced runs"]
+    end
+
+    subgraph src["flume/sources — the only vendor-aware code"]
+        AD["adapters<br/>map_spans · extract_contents<br/>probe · classify_tool"]
+    end
+
+    subgraph ing["flume/ingest — source-agnostic pipeline"]
+        DL["discovery loop<br/>quiet-file detection"]
+        WR["archive-then-persist<br/>durable checkpoints"]
+    end
+
+    subgraph sto["flume/store — imports nothing above it"]
+        RAW[("raw archive<br/>gzip · content-hashed")]
+        DB[("sqlite + FTS5<br/>sessions · turns · tools · contents")]
+    end
+
+    subgraph ana["flume/analysis"]
+        AN["analyze CLI"]
+        SV["serve :8321"]
+        IN["insight detectors"]
+    end
+
+    CC --> AD
+    CX --> AD
+    HN --> AD
+    AD --> DL
+    DL --> WR
+    WR --> RAW
+    WR --> DB
+    RAW -. "rebuild --stale" .-> WR
+    DB --> AN
+    DB --> SV
+    DB --> IN
+```
+
+Transcripts are archived before they are parsed, so a mapper bug costs a
+rebuild rather than the data. Three layers, each independently rebuildable:
 
 1. **Raw archive** (`~/.flume/raw`) — every ingested transcript
    captured as a gzip blob, content-hash-versioned, *before* parsing. The
@@ -149,11 +191,16 @@ Point the `openai` backend anywhere with `--base-url` (default is Ollama's
 ## Install & run
 
 ```sh
-uv venv && uv pip install -e .          # core: ingest + analyze, no model SDKs
-uv pip install -e '.[harness]'         # + the Anthropic harness backends
-flume analyze overview
-flume serve            # http://localhost:8321
+uv sync --no-dev                       # core: ingest + analyze, no model SDKs
+uv sync --no-dev --extra harness       # + the Anthropic harness backends
+uv run flume analyze overview
+uv run flume serve                     # http://localhost:8321
 ```
+
+`uv sync` installs from `uv.lock`, so you get the same versions CI resolved.
+`--no-dev` is what keeps the core install dependency-free — the dev group
+pulls the vendor SDKs in so CI can exercise every backend. Once `.venv/bin`
+is on your `PATH`, drop the `uv run` prefix.
 
 For unattended use, run the idempotent `--once` ingest commands from cron,
 launchd, or your scheduler of choice.
