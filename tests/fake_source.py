@@ -1,4 +1,10 @@
-"""Fake source adapter used by tests and by the initial CLI skeleton."""
+"""A source adapter backed by a fixture directory, for the runner tests.
+
+Lives here rather than in flume/ because it is scaffolding, not a feature:
+it exercises run_once without a real transcript format or store. It was
+once wired into `flume ingest --source fake`, left over from when the CLI
+predated any real adapter; no test ever used that path.
+"""
 from __future__ import annotations
 
 import json

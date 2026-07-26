@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from flume.ingest.fake import FakeTranscriptSource, fake_ingest
 from flume.ingest.runner import IngestFunction, run_once
 from flume.ingest.state import SqliteIngestStateStore
 from flume.ingest.write import store_ingest_function
@@ -105,14 +104,8 @@ def _parser() -> argparse.ArgumentParser:
         "--source",
         required=True,
         help=(
-            "Source adapter to ingest: claude-code or codex. 'fake' is a "
-            "test fixture source and needs --fake-root."
+            "Source adapter to ingest: claude-code or codex."
         ),
-    )
-    parser.add_argument(
-        "--fake-root",
-        type=Path,
-        help="Fixture directory for --source fake.",
     )
     parser.add_argument(
         "--codex-root",
@@ -231,11 +224,6 @@ def _ingest_plan(
     raw_store=None,
 ) -> IngestPlan:
     source_name = args.source
-    if source_name == "fake":
-        if args.fake_root is None:
-            parser.error("--fake-root is required for --source fake")
-        return IngestPlan(FakeTranscriptSource(args.fake_root), fake_ingest)
-
     try:
         transcripts = get_discovery(source_name, **_discovery_flags(args, source_name))
         adapter = get_adapter(source_name)

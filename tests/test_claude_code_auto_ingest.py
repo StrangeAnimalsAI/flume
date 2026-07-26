@@ -397,3 +397,41 @@ def test_cli_claude_code_dry_run_with_fixture_root(tmp_path: Path, capsys) -> No
     assert action["metadata"]["entrypoint"] == "cli"
     with SqliteIngestStateStore(state_db) as store:
         assert store.list_records() == []
+
+
+def test_cli_once_ingests_and_persists_state(tmp_path: Path, capsys) -> None:
+    """The only non-dry-run CLI test: args -> plan -> run_once -> state row.
+
+    Ported from a `--source fake` version. The fake existed because the CLI
+    predated any real adapter; using claude-code covers the same path and
+    exercises a real mapper on the way through.
+    """
+    transcript = tmp_path / "projects" / "proj" / "session-777.jsonl"
+    _write_jsonl(transcript, _claude_events("session-777"))
+    _age(transcript, seconds=20, now=time.time())
+    state_db = tmp_path / "state.sqlite3"
+
+    exit_code = main(
+        [
+            "--once",
+            "--source",
+            "claude-code",
+            "--claude-root",
+            str(transcript.parent),
+            "--state-db",
+            str(state_db),
+            "--analyzed-store-url",
+            f"sqlite://{tmp_path}/store.sqlite3",
+            "--no-raw-store",
+            "--quiet-seconds",
+            "5",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["ingested"] == 1
+    with SqliteIngestStateStore(state_db) as store:
+        record = store.get("claude-code", transcript)
+    assert record is not None
+    assert record.status == IngestStatus.INGESTED

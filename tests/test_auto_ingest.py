@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
 
-from flume.ingest.cli import main
-from flume.ingest.fake import FakeTranscriptSource, fake_ingest
+from fake_source import FakeTranscriptSource, fake_ingest
 from flume.ingest.fingerprint import fingerprint_file, is_quiet
 from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
@@ -252,38 +250,3 @@ def test_fake_ingest_can_mark_fixture_failure(tmp_path: Path) -> None:
     assert record is not None
     assert record.status == IngestStatus.FAILED
     assert record.error == "RuntimeError: fake ingest requested failure"
-
-
-def test_cli_once_with_fake_source_persists_success(
-    tmp_path: Path,
-    capsys,
-) -> None:
-    transcript = tmp_path / "fixtures" / "session.jsonl"
-    _write_jsonl(transcript, [{"session_id": "s1", "trace_id": "t1"}])
-    _age(transcript, seconds=20, now=time.time())
-    state_db = tmp_path / "state.sqlite3"
-
-    exit_code = main(
-        [
-            "--once",
-            "--source",
-            "fake",
-            "--fake-root",
-            str(transcript.parent),
-            "--state-db",
-            str(state_db),
-            "--analyzed-store-url",
-            f"sqlite://{tmp_path}/store.sqlite3",
-            "--no-raw-store",
-            "--quiet-seconds",
-            "5",
-        ]
-    )
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["ingested"] == 1
-    with SqliteIngestStateStore(state_db) as store:
-        record = store.get("fake", transcript)
-    assert record is not None
-    assert record.status == IngestStatus.INGESTED
