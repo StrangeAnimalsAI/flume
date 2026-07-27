@@ -21,6 +21,9 @@ claude-sdk = ["claude-agent-sdk>=0.2"]
 # extra needed; it is listed for discoverability only.
 openai = []
 harness = ["anthropic>=0.92", "claude-agent-sdk>=0.2"]
+# `flume serve` only. Ingest, analyze, and the hooks that run in cron stay
+# dependency-free; the dashboard is the one surface that earns a framework.
+web = ["fastapi>=0.118", "uvicorn>=0.38"]
 
 [project.scripts]
 flume = "flume.cli:main"
@@ -55,4 +58,7 @@ dev = [
     "anthropic>=0.92",
     "claude-agent-sdk>=0.2",
     "anyio>=4",
+    "fastapi>=0.118",
+    "uvicorn>=0.38",
+    "httpx2>=0.29",  # starlette.testclient (httpx v1 is deprecated there)
 ]

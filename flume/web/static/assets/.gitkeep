@@ -1,0 +1,2 @@
+Vendored browser assets (uPlot, etc). Committed rather than fetched from a
+CDN so the dashboard works offline and has no third-party runtime dependency.
