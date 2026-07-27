@@ -19,12 +19,10 @@ The UI at / is a single static file (static/index.html) — no build step.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import re
-import sys
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -32,42 +30,6 @@ from urllib.parse import parse_qs, urlparse
 from flume.store.base import AnalyzedStore, open_analyzed_store
 
 _STATIC_DIR = Path(__file__).parent / "static"
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="flume serve",
-        description="Serve the session-store analysis API and web UI.",
-    )
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8321)
-    parser.add_argument(
-        "--analyzed-store-url",
-        default=None,
-        help="Store URL (default: sqlite://~/.flume/store.sqlite3).",
-    )
-    args = parser.parse_args(argv)
-
-    store = open_analyzed_store(args.analyzed_store_url)
-    server = ThreadingHTTPServer(
-        (args.host, args.port), _handler_class(args.analyzed_store_url)
-    )
-    store.close()  # probe only; handlers open per-request connections
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
-        print(
-            f"WARNING: binding {args.host} exposes full session transcripts "
-            "(prompts, thinking, tool output) to the network with no "
-            "authentication. Only do this on a trusted network.",
-            file=sys.stderr,
-        )
-    print(f"flume UI on http://{args.host}:{args.port}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-    return 0
 
 
 def _handler_class(analyzed_store_url: str | None):
@@ -244,6 +206,3 @@ def _since_ns(window: str | None) -> int | None:
         return None
     return time.time_ns() - ttl_ns
 
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())

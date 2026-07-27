@@ -12,21 +12,3 @@ The alternative — promoting every detector aggregation to a `AnalyzedStore`
 method — would roughly double the interface with single-caller queries and
 make a second backend harder to write. See `flume.store.base.SqlReadable`.
 """
-from __future__ import annotations
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Entry point for `flume analyze`."""
-    from flume.analysis.cli import main as _main
-
-    return _main(argv)
-
-
-def serve(argv: list[str] | None = None) -> int:
-    """Entry point for `flume serve`."""
-    from flume.analysis.server import main as _main
-
-    return _main(argv)
-
-
-__all__ = ["main", "serve"]

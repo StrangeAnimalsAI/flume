@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from flume.analysis.cli import _cmd_cost
+from flume.cli.analyze import _cmd_cost
 from flume.store.base import SessionBundle
 from flume.store.sqlite import SqliteAnalyzedStore
 

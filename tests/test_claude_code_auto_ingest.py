@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from flume.ingest.cli import main
+from flume.cli.ingest import main
 from flume.ingest.runner import IngestOutcome, IngestRequest, run_once
 from flume.ingest.state import IngestStatus, SqliteIngestStateStore
 from flume.sources.claude_code import (

@@ -16,13 +16,6 @@ from flume.ingest.state import (
 from flume.ingest.write import ingest_path, rebuild_stale, store_ingest_function
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point for `flume ingest`."""
-    from flume.ingest.cli import main as _main
-
-    return _main(argv)
-
-
 __all__ = [
     "FileFingerprint",
     "IngestOutcome",
@@ -33,7 +26,6 @@ __all__ = [
     "fingerprint_file",
     "ingest_path",
     "is_quiet",
-    "main",
     "rebuild_stale",
     "run_once",
     "store_ingest_function",

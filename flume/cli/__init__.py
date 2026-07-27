@@ -33,16 +33,16 @@ class Command:
 # be documented but unresolvable, or resolvable but invisible in --help.
 _COMMANDS: dict[str, Command] = {
     "analyze": Command(
-        "query and analyze the session store", "flume.analysis", "main"
+        "query and analyze the session store", "flume.cli.analyze", "main"
     ),
     "serve": Command(
-        "serve the store UI/API over HTTP", "flume.analysis", "serve"
+        "serve the store UI/API over HTTP", "flume.cli.serve", "main"
     ),
     "ingest": Command(
-        "auto-ingest agent session files (see --source)", "flume.ingest", "main"
+        "auto-ingest agent session files (see --source)", "flume.cli.ingest", "main"
     ),
     "harness": Command(
-        "run the instrumented agent harness", "flume.harness", "main"
+        "run the instrumented agent harness", "flume.cli.harness", "main"
     ),
 }
 
