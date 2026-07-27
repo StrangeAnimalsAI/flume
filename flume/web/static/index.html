@@ -624,24 +624,47 @@ const state = { filters: {} };
 const sel = (key, value) => state.filters[key] === value ? "selected" : "";
 function setFilter(key, value) { state.filters[key] = value; render(); }
 
+// Views are async and some take tens of seconds. Without a guard, a slow
+// response lands after you have navigated away and overwrites the view you
+// are actually looking at — leaving the URL and the content disagreeing.
+let renderSeq = 0;
+
 async function render() {
+  const seq = ++renderSeq;
+  const stale = () => seq !== renderSeq;
   const route = nav();
   const [view, arg] = route.split(/\/(.+)/);
   const main = $("#main");
   disposeCharts();
+
+  // Don't flash a spinner on views that return instantly; only say something
+  // once the wait is long enough to look broken.
+  const spinner = setTimeout(() => {
+    if (!stale()) main.innerHTML = `<p class="dim">loading ${esc(view)}…</p>`;
+  }, 150);
+
   try {
-    if (view === "overview") main.innerHTML = await viewOverview();
-    else if (view === "sessions" && arg) main.innerHTML = await viewSession(arg);
-    else if (view === "sessions") main.innerHTML = await viewSessions();
-    else if (view === "tools") main.innerHTML = await viewTools();
-    else if (view === "tokens") main.innerHTML = await viewTokens();
-    else if (view === "insights") main.innerHTML = await viewInsights();
-    else if (view === "audit") main.innerHTML = await viewAudit();
-    else if (view === "search") main.innerHTML = await viewSearch();
-    else main.innerHTML = `<p class="err">unknown view</p>`;
+    let html;
+    if (view === "overview") html = await viewOverview();
+    else if (view === "sessions" && arg) html = await viewSession(arg);
+    else if (view === "sessions") html = await viewSessions();
+    else if (view === "tools") html = await viewTools();
+    else if (view === "tokens") html = await viewTokens();
+    else if (view === "insights") html = await viewInsights();
+    else if (view === "audit") html = await viewAudit();
+    else if (view === "search") html = await viewSearch();
+    else html = `<p class="err">unknown view</p>`;
+
+    clearTimeout(spinner);
+    // A newer render started while this one was awaiting; its result is what
+    // the URL now describes, so drop ours rather than overwrite the screen.
+    if (stale()) { pendingMounts = []; return; }
+    main.innerHTML = html;
     runMounts();  // charts need their container in the document first
   } catch (err) {
+    clearTimeout(spinner);
     pendingMounts = [];
+    if (stale()) return;
     main.innerHTML = `<p class="err">${esc(err.message)}</p>`;
   }
 }

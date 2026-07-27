@@ -167,6 +167,7 @@ END;
 class SqliteAnalyzedStore(AnalyzedStore):
     def __init__(self, path: str | Path, *, readonly: bool = False) -> None:
         db_path = Path(str(path)).expanduser()
+        self._readonly = readonly
         if readonly:
             # A reader must be a pure reader: no migrations, no view
             # recreation, no FTS DDL — GETs must not take write locks or
@@ -211,6 +212,17 @@ class SqliteAnalyzedStore(AnalyzedStore):
                 "CREATE INDEX IF NOT EXISTS idx_turns_request "
                 "ON turns (session_id, request_id)"
             )
+
+        # Seed planner statistics once. `PRAGMA optimize` on close keeps them
+        # fresh afterwards, but it only acts on tables that changed since the
+        # last ANALYZE — on a store built before this existed, that is nothing,
+        # so the first run has to be explicit. ~11s on a 4.5GB store, once.
+        analyzed = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        if not analyzed:
+            with self._conn:
+                self._conn.execute("ANALYZE")
 
     def _ensure_views(self) -> None:
         from flume.store.taxonomy import turn_requests_view_sql, view_sql
@@ -601,23 +613,53 @@ class SqliteAnalyzedStore(AnalyzedStore):
         like: str | None = None,
     ) -> list[dict[str, Any]]:
         marks = ", ".join("?" for _ in tool_names)
-        sql = (
-            "SELECT c.session_id, c.text "
-            "FROM contents c "
-            "JOIN tool_calls t ON t.span_id = c.span_id "
-            "JOIN sessions s ON s.session_id = c.session_id "
-            f"WHERE c.kind = 'tool_arguments' AND t.name IN ({marks})"
-        )
-        params: list[Any] = list(tool_names)
+        scope = ""
+        scope_params: list[Any] = []
         if source is not None:
-            sql += " AND s.source = ?"
-            params.append(source)
+            scope += " AND s.source = ?"
+            scope_params.append(source)
         if since_ns is not None:
-            sql += " AND s.started_at_ns >= ?"
-            params.append(since_ns)
-        if like:
-            sql += " AND c.text LIKE ?"
-            params.append(like)
+            scope += " AND s.started_at_ns >= ?"
+            scope_params.append(since_ns)
+
+        # Applied inside the window so it filters before materializing.
+        like_clause = " AND c.text LIKE ?" if like else ""
+
+        if scope:
+            # Windowed: narrow to the scoped sessions FIRST, then look up
+            # tool_calls by primary key. Left to itself the planner enters via
+            # idx_tools_name and walks every Bash/exec_command row ever
+            # recorded — 184k rows to return 2k. Materializing the window
+            # forces the small side first: 11.2s -> 2.5s on a 3.5k-session
+            # store. Join order alone does not do it; the planner reorders.
+            sql = (
+                "WITH win AS MATERIALIZED ("
+                "  SELECT c.session_id, c.span_id, c.text "
+                "  FROM sessions s "
+                "  JOIN contents c ON c.session_id = s.session_id "
+                "   AND c.kind = 'tool_arguments' "
+                f"  WHERE 1=1{scope}{like_clause}"
+                ") "
+                "SELECT win.session_id, win.text FROM win "
+                f"JOIN tool_calls t ON t.span_id = win.span_id AND t.name IN ({marks})"
+            )
+            params: list[Any] = [*scope_params]
+            if like:
+                params.append(like)
+            params.extend(tool_names)
+        else:
+            # Unscoped, the window IS the table, and materializing 300k rows of
+            # argument text costs more than it saves (21.8s vs 12.9s measured).
+            sql = (
+                "SELECT c.session_id, c.text "
+                "FROM contents c "
+                "JOIN tool_calls t ON t.span_id = c.span_id "
+                f"WHERE c.kind = 'tool_arguments' AND t.name IN ({marks})"
+            )
+            sql += like_clause
+            params = list(tool_names)
+            if like:
+                params.append(like)
         return self.rows(sql, tuple(params))
 
     # -- experiments --------------------------------------------------------
@@ -833,6 +875,18 @@ class SqliteAnalyzedStore(AnalyzedStore):
         return session_ids
 
     def close(self) -> None:
+        if not self._readonly:
+            # SQLite's planner is guessing without table statistics, and it
+            # guesses badly here: it enters analytic joins through a
+            # low-selectivity index (kind, tool name) instead of the narrow
+            # session time window, reading two orders of magnitude more rows
+            # than the query returns. `PRAGMA optimize` re-runs ANALYZE only
+            # on tables that changed enough to matter, so this is cheap on
+            # every close and keeps the stats honest as the store grows.
+            try:
+                self._conn.execute("PRAGMA optimize")
+            except sqlite3.Error:
+                pass  # never fail a close over statistics
         self._conn.close()
 
     # -- helpers ----------------------------------------------------------
