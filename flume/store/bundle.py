@@ -19,7 +19,7 @@ Span = dict[str, Any]
 # Provenance stamp written to every session row. Bump whenever flume/sources/*
 # or this module change what they derive from raw bytes;
 # `flume analyze rebuild` then re-ingests older rows.
-PIPELINE_VERSION = 4
+PIPELINE_VERSION = 5
 
 _ARGS_PREVIEW_MAX = 500
 
@@ -60,7 +60,11 @@ def bundle_from_spans(
     turns.sort(key=lambda t: (t["started_at_ns"], t["span_id"]))
     tool_calls.sort(key=lambda t: (t["started_at_ns"], t["span_id"]))
     for index, turn in enumerate(turns):
-        turn.setdefault("turn_index", index)
+        # setdefault is not enough: _turn_row always writes the key, with None
+        # for sources that don't carry one (every claude-code turn). Assign on
+        # a None value, not just an absent key.
+        if turn.get("turn_index") is None:
+            turn["turn_index"] = index
 
     thinking_rows = [c for c in contents if c.kind == "thinking"]
     session_id = attrs.get("session.id") or file_path.stem
@@ -92,11 +96,11 @@ def bundle_from_spans(
         "active_ms": _active_ms(turns),
         "turn_count": len(turns),
         "tool_call_count": len(tool_calls),
-        "input_tokens": sum(t["input_tokens"] for t in turns),
-        "output_tokens": sum(t["output_tokens"] for t in turns),
-        "cache_read_tokens": sum(t["cache_read_tokens"] for t in turns),
-        "cache_creation_tokens": sum(t["cache_creation_tokens"] for t in turns),
-        "reasoning_tokens": sum(t["reasoning_tokens"] for t in turns),
+        "input_tokens": _billed_sum(turns, "input_tokens"),
+        "output_tokens": _billed_sum(turns, "output_tokens"),
+        "cache_read_tokens": _billed_sum(turns, "cache_read_tokens"),
+        "cache_creation_tokens": _billed_sum(turns, "cache_creation_tokens"),
+        "reasoning_tokens": _billed_sum(turns, "reasoning_tokens"),
         "thinking_blocks": len(thinking_rows),
         "thinking_chars": sum(len(c.text) for c in thinking_rows),
         "first_user_message": _first_user_message(contents),
@@ -114,11 +118,28 @@ def bundle_from_spans(
     )
 
 
+def _billed_sum(turns: list[dict[str, Any]], field: str) -> int:
+    """Sum a usage field once per billed API request, not once per turn row.
+
+    Claude Code writes one transcript line per assistant content block and
+    repeats the same usage object on each, so a plain sum double-counts every
+    response that had both thinking and text. Collapse on request_id first;
+    rows without one (codex) are already per-request and keep their own key.
+    """
+    per_request: dict[str, int] = {}
+    for turn in turns:
+        key = turn.get("request_id") or turn["span_id"]
+        # Identical across a request's rows; max is just a defensive pick.
+        per_request[key] = max(per_request.get(key, 0), int(turn.get(field) or 0))
+    return sum(per_request.values())
+
+
 def _turn_row(span: Span) -> dict[str, Any]:
     attrs = span.get("attributes") or {}
     return {
         "span_id": span["span_id"],
         "turn_index": attrs.get("turn.index"),
+        "request_id": attrs.get("gen_ai.request.id"),
         "model": attrs.get("gen_ai.request.model"),
         "started_at_ns": int(span["start_unix_nano"]),
         "ended_at_ns": int(span["end_unix_nano"]),

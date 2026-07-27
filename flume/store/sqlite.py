@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS turns (
     span_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     turn_index INTEGER,
+    -- The provider's billing unit. Claude Code splits one API response across
+    -- several transcript lines (thinking, then text) and stamps the SAME usage
+    -- object on each, so one row per line double-counts tokens. Grouping by
+    -- request_id is the only way to recover the per-request truth; NULL where
+    -- a source has no equivalent (codex bills per token_count boundary).
+    request_id TEXT,
     model TEXT,
     started_at_ns INTEGER,
     ended_at_ns INTEGER,
@@ -71,6 +77,12 @@ CREATE TABLE IF NOT EXISTS turns (
     text_chars INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns (session_id, started_at_ns);
+-- Time-windowed cross-session queries ("last 7d", "by day") are the shape every
+-- chart uses; without a bare timestamp index each one full-scans.
+CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns (started_at_ns);
+-- NOTE: the index on request_id lives in _migrate(), not here. This script runs
+-- against pre-existing databases whose turns table has no such column yet, and
+-- CREATE INDEX on a missing column aborts the whole script.
 
 CREATE TABLE IF NOT EXISTS tool_calls (
     span_id TEXT PRIMARY KEY,
@@ -86,6 +98,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     result_chars INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tools_session ON tool_calls (session_id, started_at_ns);
+CREATE INDEX IF NOT EXISTS idx_tools_ts ON tool_calls (started_at_ns);
 CREATE INDEX IF NOT EXISTS idx_tools_name ON tool_calls (name);
 -- Analytic indexes: exploratory queries rank by result size / duration and
 -- group by (session, name, args) for dedup. Without these, each such query
@@ -176,16 +189,38 @@ class SqliteAnalyzedStore(AnalyzedStore):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._ensure_views()
         self._fts = self._init_fts()
 
+    def _migrate(self) -> None:
+        """Add columns the schema gained after this database was created.
+
+        `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so new
+        columns need an explicit ALTER. Adding one is cheap; backfilling it is
+        not — a column derived from raw bytes stays NULL until
+        `analyze rebuild` re-ingests the session.
+        """
+        existing = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(turns)")
+        }
+        with self._conn:
+            if "request_id" not in existing:
+                self._conn.execute("ALTER TABLE turns ADD COLUMN request_id TEXT")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_turns_request "
+                "ON turns (session_id, request_id)"
+            )
+
     def _ensure_views(self) -> None:
-        from flume.store.taxonomy import view_sql
+        from flume.store.taxonomy import turn_requests_view_sql, view_sql
 
         # Recreate so a taxonomy change takes effect on next open.
         with self._conn:
             self._conn.execute("DROP VIEW IF EXISTS tool_calls_ext")
             self._conn.execute(view_sql())
+            self._conn.execute("DROP VIEW IF EXISTS turn_requests")
+            self._conn.execute(turn_requests_view_sql())
 
     def _init_fts(self) -> bool:
         try:

@@ -176,6 +176,10 @@ def _turn_span(
             "gen_ai.system": "anthropic",
             "gen_ai.request.model": msg.get("model"),
             "gen_ai.response.id": msg.get("id"),
+            # One API response is written as several transcript lines (a
+            # thinking block, then text), each repeating the same usage object.
+            # requestId is what ties them back to the single billed request.
+            "gen_ai.request.id": ev.get("requestId"),
             "gen_ai.usage.input_tokens": usage.get("input_tokens") or 0,
             "gen_ai.usage.output_tokens": usage.get("output_tokens") or 0,
             "gen_ai.usage.cache_read_input_tokens": usage.get("cache_read_input_tokens") or 0,

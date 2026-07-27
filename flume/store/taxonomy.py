@@ -76,3 +76,43 @@ def view_sql() -> str:
         "CAST(result_chars / 4 AS INTEGER) AS result_tokens_est "
         "FROM tool_calls tc"
     )
+
+
+def turn_requests_view_sql() -> str:
+    """One row per billed API request, rather than per assistant content block.
+
+    `turns` keeps a row per content block because the attribution charts need
+    that granularity, but usage is per *request* — Claude Code repeats the same
+    usage object on every block of one response. Anything that sums tokens,
+    money, or context must read this view; summing `turns` directly inflates
+    claude-code totals by roughly 2x.
+
+    Grouped on COALESCE(request_id, span_id) so a source without request ids
+    (codex) degrades to one row per turn — its rows are already per-request.
+    Usage columns take MAX because they are identical across a request's rows;
+    thinking/text chars take SUM because they genuinely differ per block.
+    """
+    return (
+        "CREATE VIEW IF NOT EXISTS turn_requests AS SELECT "
+        "session_id, "
+        "COALESCE(request_id, span_id) AS request_key, "
+        "MIN(turn_index) AS turn_index, "
+        "MAX(model) AS model, "
+        "MIN(started_at_ns) AS started_at_ns, "
+        "MAX(ended_at_ns) AS ended_at_ns, "
+        "MAX(duration_ms) AS duration_ms, "
+        "MAX(input_tokens) AS input_tokens, "
+        "MAX(output_tokens) AS output_tokens, "
+        "MAX(cache_read_tokens) AS cache_read_tokens, "
+        "MAX(cache_creation_tokens) AS cache_creation_tokens, "
+        "MAX(reasoning_tokens) AS reasoning_tokens, "
+        "SUM(thinking_chars) AS thinking_chars, "
+        "SUM(text_chars) AS text_chars, "
+        "COUNT(*) AS block_count, "
+        # Context occupancy: the full prompt size for this request. The three
+        # are disjoint by definition (uncached + read-from-cache + written-to-
+        # cache), so their sum is what the model actually saw.
+        "MAX(input_tokens) + MAX(cache_read_tokens) + MAX(cache_creation_tokens) "
+        "AS context_tokens "
+        "FROM turns GROUP BY session_id, COALESCE(request_id, span_id)"
+    )
