@@ -111,6 +111,15 @@ def create_app(store_url: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="session not found")
         return session
 
+    @app.get("/api/sessions/{session_id}/health")
+    def session_health_route(store: Store, session_id: str) -> Any:
+        from flume.analysis.session_health import session_health
+
+        health = session_health(store, session_id)
+        if health is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return health
+
     @app.get("/api/sessions/{session_id}/contents")
     def session_contents(
         store: Store,
