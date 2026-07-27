@@ -14,15 +14,15 @@ their schema at /api/docs so an agent can discover them rather than guess.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from flume.store.base import AnalyzedStore, open_analyzed_store
+from flume.store.base import open_analyzed_store
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -30,17 +30,21 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _STORE_URL: str | None = None
 
 
-def _get_store() -> Iterator[AnalyzedStore]:
+@contextmanager
+def _store():
     """One readonly connection per request — sqlite handles are cheap.
+
+    Deliberately NOT a `Depends(...)` generator. FastAPI runs a sync dependency
+    and the sync endpoint that consumes it on separate threadpool threads, and
+    a sqlite3 connection may only be used on the thread that created it — so
+    the dependency form raises ProgrammingError on every request. Opening
+    inside the handler keeps creation and use in one thread by construction.
 
     Readonly is load-bearing, not just tidy: it keeps a browser refresh from
     running migrations or blocking a concurrent `flume analyze ingest`.
     """
     with open_analyzed_store(_STORE_URL, readonly=True) as store:
         yield store
-
-
-Store = Annotated[AnalyzedStore, Depends(_get_store)]
 
 
 def _since_ns(window: str | None) -> int | None:
@@ -80,12 +84,12 @@ def create_app(store_url: str | None = None) -> FastAPI:
         return FileResponse(_STATIC_DIR / "index.html")
 
     @app.get("/api/overview")
-    def overview(store: Store) -> Any:
-        return store.overview()
+    def overview() -> Any:
+        with _store() as store:
+            return store.overview()
 
     @app.get("/api/sessions")
     def list_sessions(
-        store: Store,
         source: str | None = None,
         surface: str | None = None,
         cwd: str | None = None,
@@ -94,116 +98,119 @@ def create_app(store_url: str | None = None) -> FastAPI:
         top_level: bool = False,
         limit: Annotated[int, Query(ge=1, le=1000)] = 50,
     ) -> Any:
-        return store.list_sessions(
-            source=source,
-            surface=surface,
-            cwd_like=cwd,
-            project=project,
-            since_ns=_since_ns(since),
-            top_level_only=top_level,
-            limit=limit,
-        )
+        with _store() as store:
+            return store.list_sessions(
+                source=source,
+                surface=surface,
+                cwd_like=cwd,
+                project=project,
+                since_ns=_since_ns(since),
+                top_level_only=top_level,
+                limit=limit,
+            )
 
     @app.get("/api/sessions/{session_id}")
-    def get_session(store: Store, session_id: str) -> Any:
-        session = store.get_session(session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="session not found")
-        return session
+    def get_session(session_id: str) -> Any:
+        with _store() as store:
+            session = store.get_session(session_id)
+            if session is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            return session
 
     @app.get("/api/sessions/{session_id}/health")
-    def session_health_route(store: Store, session_id: str) -> Any:
-        from flume.analysis.session_health import session_health
+    def session_health_route(session_id: str) -> Any:
+        with _store() as store:
+            from flume.analysis.session_health import session_health
 
-        health = session_health(store, session_id)
-        if health is None:
-            raise HTTPException(status_code=404, detail="session not found")
-        return health
+            health = session_health(store, session_id)
+            if health is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            return health
 
     @app.get("/api/sessions/{session_id}/contents")
     def session_contents(
-        store: Store,
         session_id: str,
         kind: Annotated[list[str] | None, Query()] = None,
     ) -> Any:
-        return store.get_contents(session_id, kinds=kind)
+        with _store() as store:
+            return store.get_contents(session_id, kinds=kind)
 
     @app.get("/api/sessions/{session_id}/commands")
-    def session_commands(store: Store, session_id: str) -> Any:
-        return store.session_commands(session_id)
+    def session_commands(session_id: str) -> Any:
+        with _store() as store:
+            return store.session_commands(session_id)
 
     @app.get("/api/tools")
     def tools(
-        store: Store,
         source: str | None = None,
         since: str | None = None,
         top: Annotated[int, Query(ge=1, le=200)] = 10,
     ) -> Any:
-        return store.tool_stats(
-            source=source, since_ns=_since_ns(since), slowest=top, largest=top
-        )
+        with _store() as store:
+            return store.tool_stats(
+                source=source, since_ns=_since_ns(since), slowest=top, largest=top
+            )
 
     @app.get("/api/tokens")
     def tokens(
-        store: Store,
         source: str | None = None,
         since: str | None = None,
         group_by: str = "source",
     ) -> Any:
-        return store.token_stats(
-            source=source, since_ns=_since_ns(since), group_by=group_by
-        )
+        with _store() as store:
+            return store.token_stats(
+                source=source, since_ns=_since_ns(since), group_by=group_by
+            )
 
     @app.get("/api/audit/repeats")
     def audit_repeats(
-        store: Store,
         source: str | None = None,
         since: str | None = None,
         limit: Annotated[int, Query(ge=1, le=500)] = 50,
     ) -> Any:
-        return store.audit_repeats(
-            source=source, since_ns=_since_ns(since), limit=limit
-        )
+        with _store() as store:
+            return store.audit_repeats(
+                source=source, since_ns=_since_ns(since), limit=limit
+            )
 
     @app.get("/api/audit/whole_file_reads")
     def audit_whole_file_reads(
-        store: Store,
         source: str | None = None,
         since: str | None = None,
         min_chars: int = 50_000,
         limit: Annotated[int, Query(ge=1, le=500)] = 50,
     ) -> Any:
-        return store.audit_whole_file_reads(
-            source=source,
-            since_ns=_since_ns(since),
-            min_chars=min_chars,
-            limit=limit,
-        )
+        with _store() as store:
+            return store.audit_whole_file_reads(
+                source=source,
+                since_ns=_since_ns(since),
+                min_chars=min_chars,
+                limit=limit,
+            )
 
     @app.get("/api/audit/toolgaps")
-    def audit_toolgaps(
-        store: Store, since: str | None = None, min_sessions: int = 3
-    ) -> Any:
-        from flume.analysis.audit import script_clusters
+    def audit_toolgaps(since: str | None = None, min_sessions: int = 3) -> Any:
+        with _store() as store:
+            from flume.analysis.audit import script_clusters
 
-        return script_clusters(
-            store, since_ns=_since_ns(since), min_sessions=min_sessions
-        )
+            return script_clusters(
+                store, since_ns=_since_ns(since), min_sessions=min_sessions
+            )
 
     @app.get("/api/insights")
     def insights(
-        store: Store,
         since: str = "7d",
         stored: bool = False,
         limit: Annotated[int, Query(ge=1, le=500)] = 50,
     ) -> Any:
-        if stored:
-            return store.list_findings(limit=limit)
-        from flume.analysis.insights import run_insights
+        with _store() as store:
+            if stored:
+                return store.list_findings(limit=limit)
+            from flume.analysis.insights import run_insights
 
-        # A GET must not write: refreshing the page shouldn't bump finding
-        # occurrence counts (persistence happens in the CLI).
-        return run_insights(store, since_ns=_since_ns(since), persist=False)
+            # A GET must not write: refreshing the page shouldn't bump finding
+            # occurrence counts (persistence happens in the CLI).
+            return run_insights(store, since_ns=_since_ns(since), persist=False)
 
     @app.get("/api/raw_store")
     def raw_store() -> Any:
@@ -215,7 +222,6 @@ def create_app(store_url: str | None = None) -> FastAPI:
 
     @app.get("/api/search")
     def search(
-        store: Store,
         q: str | None = None,
         kind: Annotated[list[str] | None, Query()] = None,
         source: str | None = None,
@@ -223,7 +229,8 @@ def create_app(store_url: str | None = None) -> FastAPI:
     ) -> Any:
         if not q:
             return []
-        return store.search(q, kinds=kind, source=source, limit=limit)
+        with _store() as store:
+            return store.search(q, kinds=kind, source=source, limit=limit)
 
     # Mounted last so it cannot shadow an /api route. StaticFiles resolves and
     # confines paths itself, which is why assets are served through it rather
