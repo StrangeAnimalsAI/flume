@@ -152,6 +152,43 @@ def test_no_cors_header_is_exposed(client: TestClient) -> None:
     }
 
 
+def test_insights_reports_its_own_freshness(client: TestClient) -> None:
+    """The UI has to distinguish a cached answer from a fresh one."""
+    live = client.get("/api/insights", params={"since": "7d"}).json()
+    assert live["stored"] is False
+    assert live["computed_at_ns"] is not None
+    assert isinstance(live["findings"], list)
+
+    stored = client.get(
+        "/api/insights", params={"since": "7d", "stored": 1}
+    ).json()
+    assert stored["stored"] is True
+    # Nothing persisted in this fixture, so the UI must be able to tell
+    # "no stored run yet" from "a stored run that found nothing".
+    assert stored["findings"] == []
+    assert stored["computed_at_ns"] is None
+
+
+def test_stored_insights_are_window_scoped(client: TestClient, tmp_path: Path) -> None:
+    store_url = f"sqlite://{tmp_path}/store.sqlite3"
+    finding = {
+        "kind": "repeat_waste", "fingerprint": "f1", "severity": 2,
+        "title": "t", "detail": "d", "metric": 1.0, "unit": "calls",
+        "action": "a", "evidence": "{}",
+    }
+    with open_analyzed_store(store_url) as store:
+        store.upsert_findings([finding], window="30d")
+
+    assert client.get(
+        "/api/insights", params={"since": "7d", "stored": 1}
+    ).json()["findings"] == []
+    thirty = client.get(
+        "/api/insights", params={"since": "30d", "stored": 1}
+    ).json()
+    assert [f["fingerprint"] for f in thirty["findings"]] == ["f1"]
+    assert thirty["computed_at_ns"] is not None
+
+
 def test_static_mount_refuses_traversal(client: TestClient) -> None:
     """The one route that reads arbitrary paths off disk."""
     response = client.get("/assets/../../../store/sqlite.py")

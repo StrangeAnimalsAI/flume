@@ -237,16 +237,28 @@ class AnalyzedStore(ABC):
         """
 
     @abstractmethod
-    def upsert_findings(self, findings: list[dict[str, Any]]) -> None:
-        """Persist insight findings. Rows are keyed by (kind, fingerprint):
-        a recurring finding updates last_seen/occurrences/metric on the
-        existing row instead of duplicating, so trends stay visible."""
+    def upsert_findings(
+        self, findings: list[dict[str, Any]], *, window: str = ""
+    ) -> None:
+        """Persist insight findings. Rows are keyed by
+        (kind, fingerprint, window): a recurring finding updates
+        last_seen/occurrences/metric on the existing row instead of
+        duplicating, so trends stay visible. `window` is the lookback the
+        detectors ran over — the same fingerprint over 7d and over 30d is two
+        observations, not one."""
+
+    @abstractmethod
+    def clear_findings(self, *, window: str, keep_seen_after_ns: int) -> int:
+        """Drop findings in `window` not refreshed by the run that just
+        completed, so resolved problems leave the stored view. Returns the
+        number removed."""
 
     @abstractmethod
     def list_findings(
         self,
         *,
         kind: str | None = None,
+        window: str | None = None,
         active_within_ns: int | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:

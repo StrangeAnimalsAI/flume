@@ -205,12 +205,28 @@ def create_app(store_url: str | None = None) -> FastAPI:
     ) -> Any:
         with _store() as store:
             if stored:
-                return store.list_findings(limit=limit)
+                # Scoped to the window, or a 7d row and a 30d row for the same
+                # fingerprint come back as two indistinguishable findings.
+                findings = store.list_findings(window=since, limit=limit)
+                computed_at = max(
+                    (f["last_seen_ns"] for f in findings), default=None
+                )
+                return {
+                    "findings": findings,
+                    "computed_at_ns": computed_at,
+                    "stored": True,
+                }
             from flume.analysis.insights import run_insights
 
             # A GET must not write: refreshing the page shouldn't bump finding
-            # occurrence counts (persistence happens in the CLI).
-            return run_insights(store, since_ns=_since_ns(since), persist=False)
+            # occurrence counts (persistence happens in the CLI/daemon).
+            return {
+                "findings": run_insights(
+                    store, since_ns=_since_ns(since), persist=False
+                ),
+                "computed_at_ns": time.time_ns(),
+                "stored": False,
+            }
 
     @app.get("/api/raw_store")
     def raw_store() -> Any:

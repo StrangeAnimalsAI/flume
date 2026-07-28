@@ -389,11 +389,17 @@ def _cmd_search(store, args) -> list[dict[str, Any]]:
 
 def _cmd_insights(store, args) -> list[dict[str, Any]]:
     if args.stored:
-        return store.list_findings(limit=args.limit)
+        return store.list_findings(window=args.since, limit=args.limit)
     from flume.analysis.insights import run_insights
 
+    # Label the persisted rows with the window they describe, matching what
+    # `flume ingest --refresh-insights` writes — otherwise a CLI run and a
+    # daemon run over the same lookback accumulate two separate histories.
     return run_insights(
-        store, since_ns=_since_ns(args.since), source=args.source
+        store,
+        since_ns=_since_ns(args.since),
+        source=args.source,
+        window=args.since or "",
     )[: args.limit]
 
 
@@ -649,9 +655,11 @@ def _cmd_review(store, args) -> dict[str, Any]:
     def pick(flag, key, cast):
         return cast(settings[key]) if flag is None else flag
 
+    window = pick(args.since, "since", str)
     return run_review(
         store,
-        since_ns=_since_ns(pick(args.since, "since", str)),
+        since_ns=_since_ns(window),
+        window=window or "",
         severity_max=pick(args.severity_max, "severity_max", int),
         growth=pick(args.growth, "growth", float),
         baseline_days=pick(args.baseline_days, "baseline_days", int),

@@ -270,31 +270,69 @@ function healthPanel(h) {
     ${redHtml}`;
 }
 
+const fmtAgo = (ns) => {
+  if (!ns) return "unknown";
+  const ms = Date.now() - ns / 1e6;
+  return ms < 0 ? "just now" : fmtDur(ms) + " ago";
+};
+
 async function viewInsights() {
   const since = state.insightSince || "7d";
-  const findings = await api("/api/insights?since=" + since);
+  // Read the daemon's precomputed findings by default. Recomputing on request
+  // costs a fifth of a second warm but several seconds cold, and only the
+  // stored rows carry occurrence history — how long a problem has persisted
+  // is the thing a snapshot cannot tell you.
+  const live = state.insightsLive === true;
+  const payload = await api(
+    `/api/insights?since=${since}` + (live ? "" : "&stored=1")
+  );
+  const findings = payload.findings ?? [];
+
+  // Precomputed but empty means the daemon has not covered this window yet;
+  // say so rather than implying a clean bill of health.
+  const uncovered = !live && !findings.length;
+  const freshness = live
+    ? `<span class="dim">computed just now</span>`
+    : uncovered
+      ? `<span class="err">no stored run for ${esc(since)}</span>`
+      : `<span class="dim">stored, computed ${fmtAgo(payload.computed_at_ns)}</span>`;
+
   const picker = `
     <div class="filters">
       ${["24h", "7d", "30d"].map((w) =>
-        `<button onclick="state.insightSince='${w}';render()"
+        `<button onclick="state.insightSince='${w}';state.insightsLive=false;render()"
            style="${w === since ? "border-color: var(--accent)" : ""}">${w}</button>`
       ).join("")}
-      <span class="dim">detectors: toolgaps · repeat waste · error hotspots ·
-        context floods · idle-gap churn · marathons · premium grind ·
-        docnav adoption</span>
-    </div>`;
+      ${freshness}
+      <button onclick="state.insightsLive=true;render()"
+        ${live ? "disabled" : ""}>recompute now</button>
+      ${live ? `<button onclick="state.insightsLive=false;render()">back to stored</button>` : ""}
+    </div>
+    <div class="filters"><span class="dim">detectors: toolgaps · repeat waste ·
+      error hotspots · context floods · idle-gap churn · marathons ·
+      premium grind · docnav adoption</span></div>`;
   const sevName = {1: "act now", 2: "worth fixing", 3: "watch"};
   const sevColor = {1: "var(--warn)", 2: "var(--accent)", 3: "var(--dim)"};
   const blocks = findings.map((f) => [
     `<div class="block" style="white-space:normal;border-left:3px solid ${sevColor[f.severity]}">`,
     `<div class="meta"><span class="badge" style="color:${sevColor[f.severity]};border-color:${sevColor[f.severity]}">${sevName[f.severity]}</span> `,
     `<span class="badge">${esc(f.kind)}</span>`,
-    f.occurrences > 1 ? ` <span class="dim">seen ${f.occurrences}x</span>` : "",
+    // Occurrences only exist on stored rows — it is the count of scheduled
+    // runs that still saw this, i.e. how long it has been true.
+    f.occurrences > 1
+      ? ` <span class="dim">seen in ${f.occurrences} runs since
+          ${fmtTs(f.first_seen_ns).slice(0, 10)}</span>`
+      : f.first_seen_ns ? ` <span class="dim">new</span>` : "",
     `</div><strong>${esc(f.title)}</strong>`,
     `<div class="dim" style="margin:6px 0">${esc(f.detail ?? "")}</div>`,
     `<div>&rarr; ${esc(f.action ?? "")}</div></div>`,
   ].join("")).join("");
-  return picker + (blocks || `<p class="dim">(no findings in window)</p>`);
+  const empty = uncovered
+    ? `<p class="dim">Nothing stored for this window yet. The daemon fills it
+       when run with <code>--refresh-insights</code>; until then use
+       <em>recompute now</em>.</p>`
+    : `<p class="dim">(no findings in window)</p>`;
+  return picker + (blocks || empty);
 }
 
 async function viewAudit() {

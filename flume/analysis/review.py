@@ -69,9 +69,15 @@ def run_review(
     baseline_days: int = 30,
     min_sessions: int = 10,
     source: str | None = None,
+    window: str = "",
 ) -> dict[str, Any]:
     """Assemble the review. Persists findings, as `insights` does; the rest
-    is read-only."""
+    is read-only.
+
+    `window` is the lookback label these findings are stored under. Both the
+    pre-read and the persist use it, so a review over 7d compares against
+    prior 7d runs rather than against a 30d row that happens to share a
+    fingerprint."""
     from flume.analysis.experiments import compare_experiment
     from flume.analysis.hooks import hook_events, hooks_summary
     from flume.analysis.insights import run_insights
@@ -79,9 +85,16 @@ def run_review(
     require_sql(store, "review")
 
     # Before the detectors overwrite them (see module docstring).
-    previous = {_key(f): f for f in store.list_findings(limit=10_000)}
+    previous = {
+        _key(f): f for f in store.list_findings(window=window, limit=10_000)
+    }
 
-    findings = [dict(f) for f in run_insights(store, since_ns=since_ns, source=source)]
+    findings = [
+        dict(f)
+        for f in run_insights(
+            store, since_ns=since_ns, source=source, window=window
+        )
+    ]
     ranked = [f for f in findings if int(f.get("severity", 99)) <= severity_max]
 
     new, grown = [], []

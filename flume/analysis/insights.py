@@ -17,6 +17,7 @@ Severity heuristics are tuned for a single-user corpus; adjust freely.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from flume.store.base import require_sql
@@ -52,6 +53,7 @@ def run_insights(
     since_ns: int | None = None,
     source: str | None = None,
     persist: bool = True,
+    window: str = "",
 ) -> list[Finding]:
     """Run every detector, persist findings (deduped) unless persist=False,
     return them ranked.
@@ -59,7 +61,11 @@ def run_insights(
     `source` restricts the scan to one source name; None means every source
     in the store. Detectors are source-agnostic — the patterns they look
     for (duplicate calls, idle gaps, navigation grind) are properties of
-    agentic coding, not of any one vendor."""
+    agentic coding, not of any one vendor.
+
+    `window` labels the persisted rows with the lookback they describe, so a
+    7d and a 30d run accumulate separate histories rather than overwriting
+    each other's occurrence counts."""
 
     # Declared up front: nine of eleven detectors need SQL, so failing on
     # whichever one happens to run first would be an arbitrary error.
@@ -81,7 +87,12 @@ def run_insights(
         findings.extend(detector(store, since_ns, source))
     findings.sort(key=lambda f: (f["severity"], -f["metric"]))
     if persist:
-        store.upsert_findings(findings)
+        stamp = time.time_ns()
+        store.upsert_findings(findings, window=window)
+        # Anything in this window the run did not just touch is resolved.
+        # Without the sweep the stored view only ever grows, and a fixed
+        # problem keeps reporting its last-known severity forever.
+        store.clear_findings(window=window, keep_seen_after_ns=stamp)
     return findings
 
 

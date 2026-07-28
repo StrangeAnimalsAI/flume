@@ -61,6 +61,43 @@ def _apply_retention(args: argparse.Namespace, analyzed_store, raw_store) -> Non
     _print_summary({"retention": report})
 
 
+def _refresh_insights(args: argparse.Namespace, analyzed_store) -> None:
+    """Recompute the stored findings for each rolling window.
+
+    Runs here rather than on request because the detectors read far more than
+    they return — a 30-day pass touches tens of MB of tool arguments — and
+    that cost lands unpredictably: warm it is a fifth of a second, cold after
+    an idle spell it is several. Precomputing turns a view whose latency
+    swings ~40x into a table read, and it is the only way the occurrence
+    counts mean anything, since a finding's history is built by observing it
+    repeatedly on a schedule.
+    """
+    if not args.refresh_insights or analyzed_store is None:
+        return
+    from flume.analysis.insights import run_insights
+    from flume.store.config import parse_duration_ns
+
+    report = {}
+    for window in args.insight_windows.split(","):
+        window = window.strip()
+        if not window:
+            continue
+        try:
+            span_ns = parse_duration_ns(window)
+        except ValueError:
+            print(f"skipping unparseable insight window {window!r}", file=sys.stderr)
+            continue
+        findings = run_insights(
+            analyzed_store,
+            since_ns=None if span_ns is None else time.time_ns() - span_ns,
+            persist=not args.dry_run,
+            window=window,
+        )
+        report[window] = len(findings)
+    if report:
+        _print_summary({"insights": report})
+
+
 def _run(args: argparse.Namespace, plan, analyzed_store, raw_store) -> int:
     # Nothing to read and nothing may be written: stay off disk.
     ephemeral = args.dry_run and not Path(args.state_db).exists()
@@ -81,6 +118,7 @@ def _run(args: argparse.Namespace, plan, analyzed_store, raw_store) -> int:
                 )
                 _print_summary(summary.to_dict())
                 _apply_retention(args, analyzed_store, raw_store)
+                _refresh_insights(args, analyzed_store)
                 time.sleep(args.interval_seconds)
 
         summary = run_once(
@@ -92,6 +130,7 @@ def _run(args: argparse.Namespace, plan, analyzed_store, raw_store) -> int:
         )
         _print_summary(summary.to_dict())
         _apply_retention(args, analyzed_store, raw_store)
+        _refresh_insights(args, analyzed_store)
         return 1 if summary.failed else 0
 
 
@@ -162,6 +201,23 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "After each ingest pass, enforce retention TTLs from "
             "~/.flume/config.toml."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-insights",
+        action="store_true",
+        help=(
+            "After each ingest pass, recompute and store findings for each "
+            "--insight-window, so the dashboard reads them instead of "
+            "computing on request."
+        ),
+    )
+    parser.add_argument(
+        "--insight-windows",
+        default="24h,7d,30d",
+        help=(
+            "Comma-separated lookbacks to precompute with --refresh-insights "
+            "(default: 24h,7d,30d)."
         ),
     )
     parser.add_argument(

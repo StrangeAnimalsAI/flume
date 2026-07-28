@@ -121,6 +121,11 @@ CREATE TABLE IF NOT EXISTS experiments (
 CREATE TABLE IF NOT EXISTS findings (
     kind TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
+    -- The lookback the detectors ran over ('7d', '30d', ...). Part of the
+    -- identity: the same fingerprint seen over 7 days and over 30 is two
+    -- observations, and merging them makes "how long has this been true"
+    -- unanswerable. '' means an unscoped run.
+    window TEXT NOT NULL DEFAULT '',
     severity INTEGER NOT NULL,
     title TEXT NOT NULL,
     detail TEXT,
@@ -131,8 +136,12 @@ CREATE TABLE IF NOT EXISTS findings (
     first_seen_ns INTEGER NOT NULL,
     last_seen_ns INTEGER NOT NULL,
     occurrences INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (kind, fingerprint)
+    PRIMARY KEY (kind, fingerprint, window)
 );
+-- NOTE: the index on `window` lives in _migrate(), for the same reason as
+-- idx_turns_request: this script runs against pre-existing databases whose
+-- findings table has no such column yet, and CREATE INDEX on a missing
+-- column aborts the whole script.
 
 CREATE TABLE IF NOT EXISTS contents (
     id INTEGER PRIMARY KEY,
@@ -211,6 +220,32 @@ class SqliteAnalyzedStore(AnalyzedStore):
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_turns_request "
                 "ON turns (session_id, request_id)"
+            )
+
+        # `window` joined the findings primary key, and SQLite cannot ALTER a
+        # primary key — the table has to be rebuilt. It is small (tens of rows)
+        # and fully derivable by re-running the detectors, so this is cheap.
+        # Existing rows came from the daily digest, which runs `--since 7d`.
+        finding_cols = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(findings)")
+        }
+        if finding_cols and "window" not in finding_cols:
+            with self._conn:
+                self._conn.execute("ALTER TABLE findings RENAME TO findings_old")
+                self._conn.executescript(_SCHEMA)
+                self._conn.execute(
+                    "INSERT INTO findings (kind, fingerprint, window, severity,"
+                    " title, detail, metric, unit, action, evidence,"
+                    " first_seen_ns, last_seen_ns, occurrences) "
+                    "SELECT kind, fingerprint, '7d', severity, title, detail,"
+                    " metric, unit, action, evidence, first_seen_ns,"
+                    " last_seen_ns, occurrences FROM findings_old"
+                )
+                self._conn.execute("DROP TABLE findings_old")
+        with self._conn:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_findings_window "
+                "ON findings (window, last_seen_ns)"
             )
 
         # Seed planner statistics once. `PRAGMA optimize` on close keeps them
@@ -763,18 +798,19 @@ class SqliteAnalyzedStore(AnalyzedStore):
         ]
         return ",".join(matched) if matched else None
 
-    def upsert_findings(self, findings: list[dict[str, Any]]) -> None:
-
+    def upsert_findings(
+        self, findings: list[dict[str, Any]], *, window: str = ""
+    ) -> None:
         now = time.time_ns()
         with self._conn:
             for f in findings:
                 self._conn.execute(
                     """
-                    INSERT INTO findings (kind, fingerprint, severity, title,
-                        detail, metric, unit, action, evidence,
+                    INSERT INTO findings (kind, fingerprint, window, severity,
+                        title, detail, metric, unit, action, evidence,
                         first_seen_ns, last_seen_ns, occurrences)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    ON CONFLICT (kind, fingerprint) DO UPDATE SET
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ON CONFLICT (kind, fingerprint, window) DO UPDATE SET
                         severity = excluded.severity,
                         title = excluded.title,
                         detail = excluded.detail,
@@ -786,16 +822,34 @@ class SqliteAnalyzedStore(AnalyzedStore):
                         occurrences = occurrences + 1
                     """,
                     (
-                        f["kind"], f["fingerprint"], f["severity"], f["title"],
-                        f.get("detail"), f.get("metric"), f.get("unit"),
-                        f.get("action"), f.get("evidence"), now, now,
+                        f["kind"], f["fingerprint"], window, f["severity"],
+                        f["title"], f.get("detail"), f.get("metric"),
+                        f.get("unit"), f.get("action"), f.get("evidence"),
+                        now, now,
                     ),
                 )
+
+    def clear_findings(self, *, window: str, keep_seen_after_ns: int) -> int:
+        """Drop findings in a window the latest run no longer reports.
+
+        Without this a resolved problem sits in the stored view forever: the
+        upsert only ever refreshes rows the detectors still produce, so a
+        finding that stops recurring keeps its last severity and its stale
+        `last_seen_ns`, and reads as current. Anything not touched by the run
+        that just completed is, by definition, no longer true of that window.
+        """
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM findings WHERE window = ? AND last_seen_ns < ?",
+                (window, keep_seen_after_ns),
+            )
+        return cursor.rowcount or 0
 
     def list_findings(
         self,
         *,
         kind: str | None = None,
+        window: str | None = None,
         active_within_ns: int | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
@@ -803,6 +857,9 @@ class SqliteAnalyzedStore(AnalyzedStore):
         if kind:
             conditions.append("kind = ?")
             params.append(kind)
+        if window is not None:
+            conditions.append("window = ?")
+            params.append(window)
         if active_within_ns is not None:
 
             conditions.append("last_seen_ns >= ?")
