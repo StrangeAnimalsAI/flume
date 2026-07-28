@@ -96,6 +96,24 @@ def run_insights(
     return findings
 
 
+def _top_sessions(
+    contributions: dict[str, float], unit: str, limit: int = 5
+) -> dict[str, Any]:
+    """Evidence naming the sessions a whole-store finding actually came from.
+
+    An aggregate finding says a problem exists; without this it does not say
+    where to look, so acting on it means re-deriving the contributors by hand.
+    Ranked by contribution so the first link is the worst offender.
+    """
+    ranked = sorted(contributions.items(), key=lambda kv: -kv[1])[:limit]
+    return {
+        "worst_sessions": [sid for sid, _ in ranked],
+        "contributions": [
+            {"session_id": sid, unit: round(value, 2)} for sid, value in ranked
+        ],
+    }
+
+
 def _finding(kind, fingerprint, severity, title, detail, metric, unit, action,
              evidence=None) -> Finding:
     return {
@@ -135,10 +153,16 @@ def _repeat_waste(store, since_ns, source) -> list[Finding]:
     for row in store.audit_repeats(source=source, since_ns=since_ns, limit=200):
         if not row.get("byte_identical"):
             continue
-        slot = by_tool.setdefault(row["name"], {"calls": 0, "ms": 0, "groups": 0})
-        slot["calls"] += row["calls"] - 1
-        slot["ms"] += row["total_ms"] * (row["calls"] - 1) / max(row["calls"], 1)
+        slot = by_tool.setdefault(
+            row["name"], {"calls": 0, "ms": 0, "groups": 0, "sessions": {}}
+        )
+        wasted = row["calls"] - 1
+        slot["calls"] += wasted
+        slot["ms"] += row["total_ms"] * wasted / max(row["calls"], 1)
         slot["groups"] += 1
+        slot["sessions"][row["session_id"]] = (
+            slot["sessions"].get(row["session_id"], 0) + wasted
+        )
     for tool, agg in sorted(by_tool.items(), key=lambda kv: -kv[1]["calls"]):
         if agg["calls"] < 5:
             continue
@@ -151,6 +175,7 @@ def _repeat_waste(store, since_ns, source) -> list[Finding]:
             agg["calls"], "wasted calls",
             "Retry loop or schema mismatch — fix the calling prompt or "
             "schema, or add a pre-tool guard if your agent supports hooks.",
+            _top_sessions(agg["sessions"], "wasted_calls"),
         ))
     return out
 
@@ -261,6 +286,22 @@ def _idle_gap_churn(store, since_ns, source) -> list[Finding]:
     tokens = row.get("rewrite_tokens") or 0
     if tokens < 5_000_000:
         return []
+    # Same window function, grouped, so the finding can name the sessions
+    # paying for it rather than only the total.
+    per_session = store.rows(
+        f"""
+        SELECT session_id, SUM(next_cc) AS rewrite_tokens
+        FROM (
+            SELECT t.session_id,
+                   t.cache_creation_tokens AS next_cc,
+                   t.started_at_ns - LAG(t.ended_at_ns) OVER (
+                       PARTITION BY t.session_id ORDER BY t.started_at_ns
+                   ) AS gap
+            FROM turns t JOIN sessions s USING (session_id)
+            {where}
+        ) WHERE gap > {IDLE_GAP_NS}
+        GROUP BY session_id ORDER BY rewrite_tokens DESC LIMIT 5
+        """, params)
     return [_finding(
         "idle_gap_churn", _fp(source),
         2 if tokens < 50_000_000 else 1,
@@ -271,6 +312,10 @@ def _idle_gap_churn(store, since_ns, source) -> list[Finding]:
         tokens / 1e6, "M tokens",
         "End the session when stepping away; start a fresh one on "
         "return. Batch replies while a session is active.",
+        _top_sessions(
+            {r["session_id"]: (r["rewrite_tokens"] or 0) / 1e6 for r in per_session},
+            "rewrite_Mtok",
+        ),
     )]
 
 
@@ -460,6 +505,19 @@ def _thinking_volume(store, since_ns, source) -> list[Finding]:
         "Trim thinking volume where judgment isn't needed: delegate "
         "mechanical loops to a cheaper model, and sweep your agent's effort "
         "or reasoning setting (analyze experiment start effort-<level>).",
+        _top_sessions(
+            {
+                r["session_id"]: (r["out_tok"] or 0) / 1e6
+                for r in store.rows(
+                    f"""
+                    SELECT t.session_id, SUM(t.output_tokens) out_tok
+                    FROM turns t JOIN sessions s USING (session_id)
+                    {where} {_and(where)} s.is_subagent = 0 AND ({premium})
+                    GROUP BY t.session_id ORDER BY out_tok DESC LIMIT 5
+                    """, params)
+            },
+            "premium_output_Mtok",
+        ),
     )]
 
 

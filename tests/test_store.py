@@ -616,3 +616,62 @@ def test_active_ms_handles_degenerate_turn_lists() -> None:
     assert _active_ms([{"duration_ms": 0, "started_at_ns": 5}]) == 0
     # Missing timestamps must not raise.
     assert _active_ms([{"duration_ms": 0, "started_at_ns": None}]) == 0
+
+
+def test_repeat_waste_names_the_sessions_it_came_from(tmp_path: Path) -> None:
+    """A store-wide finding must say WHERE to look.
+
+    Without this the insight reports that duplicate calls exist but not in
+    which session, so acting on it means re-deriving the contributors by
+    hand — which is exactly the work the evidence exists to save.
+    """
+    import json
+
+    from flume.analysis.insights import run_insights
+
+    def _flaky(session_id: str, calls: int) -> Path:
+        events = [{
+            "type": "user", "uuid": f"{session_id}-u0",
+            "timestamp": "2026-04-20T10:00:00.000Z", "entrypoint": "cli",
+            "message": {"role": "user", "content": "go"},
+        }]
+        for i in range(calls):
+            events.append({
+                "type": "assistant", "uuid": f"{session_id}-a{i}",
+                "requestId": f"req_{session_id}_{i}",
+                "timestamp": f"2026-04-20T10:{i:02d}:00.000Z",
+                "message": {
+                    "role": "assistant", "id": f"m{i}", "model": "claude-opus-5",
+                    "content": [{
+                        "type": "tool_use", "id": f"tu_{session_id}_{i}",
+                        "name": "FlakyTool", "input": {"q": "same"},
+                    }],
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            })
+            events.append({
+                "type": "user", "uuid": f"{session_id}-r{i}",
+                "timestamp": f"2026-04-20T10:{i:02d}:30.000Z",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": f"tu_{session_id}_{i}",
+                    "content": "identical result",
+                }]},
+            })
+        path = tmp_path / f"{session_id}.jsonl"
+        _write_jsonl(path, events)
+        return path
+
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+        ingest_path(store, get_adapter("claude-code"), _flaky("heavy", 9))
+        ingest_path(store, get_adapter("claude-code"), _flaky("light", 4))
+        waste = next(
+            f for f in run_insights(store, persist=False)
+            if f["kind"] == "repeat_waste"
+        )
+
+    evidence = json.loads(waste["evidence"])
+    # Ranked worst-first, so the first link is the one to open.
+    assert evidence["worst_sessions"][:2] == ["heavy", "light"]
+    top = evidence["contributions"][0]
+    assert top["session_id"] == "heavy"
+    assert top["wasted_calls"] == 8  # 9 identical calls, 8 of them re-work

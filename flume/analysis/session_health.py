@@ -86,10 +86,15 @@ def _headline(session, requests, calls) -> dict[str, Any]:
     read = sum(r["cache_read_tokens"] or 0 for r in requests)
     repeats = _repeat_gaps(calls)
     errors = sum(1 for c in calls if c["is_error"])
+    # cache_coverage_pct and error_pct stay in the payload — the API is a data
+    # surface — but the view does not spend a headline slot on them: across
+    # sessions with 6x spreads in re-send factor they varied 96.5-99.2% and
+    # 1.0-3.0%, which is not a signal anyone can act on.
     return {
         "tool_calls": len(calls),
         "model_requests": len(requests),
         "wall_ms": session["wall_ms"] or 0,
+        "active_ms": _time_split(session, calls)["active_ms"],
         "peak_context_tokens": peak,
         "context_throughput_tokens": throughput,
         # How many times the context was re-sent. The number the in-app
@@ -102,7 +107,15 @@ def _headline(session, requests, calls) -> dict[str, Any]:
 
 
 def _time_split(session, calls) -> dict[str, Any]:
-    """Wall clock split into tool execution, model/overhead, and idle.
+    """Where the session's *active* time went — tool execution vs model.
+
+    Idle is measured but is not part of the split, because it is not the
+    agent's time: a session left open overnight reports 97% idle, which says
+    something about the human and nothing about the run. Across real sessions
+    idle swamped everything (79-97%), squashing the only comparison that
+    matters — tool versus model — into a sliver. `active_ms` is the honest
+    denominator; `idle_ms` stays in the payload so wall clock still
+    reconciles, and so "how much of the elapsed time was real" is answerable.
 
     Note what this cannot be: per-turn model latency. Claude Code transcripts
     carry duration_ms 0 on every turn and the mapper derives start from
@@ -129,6 +142,8 @@ def _time_split(session, calls) -> dict[str, Any]:
         "tool_ms": tool_ms,
         "model_ms": model_ms,
         "idle_ms": idle_ms,
+        # The denominator the split is drawn against.
+        "active_ms": tool_ms + model_ms,
         # Time before the first tool call and after the last, mostly.
         "unaccounted_ms": max(0, wall_ms - tool_ms - model_ms - idle_ms),
     }

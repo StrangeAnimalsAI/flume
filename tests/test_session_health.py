@@ -156,6 +156,22 @@ def test_expiry_threshold_is_a_ratio_not_a_duration() -> None:
     assert 0 < EXPIRY_WRITE_RATIO <= 1
 
 
+def test_active_time_excludes_idle(tmp_path: Path) -> None:
+    """Idle is the human's time, not the run's, and must not be a denominator.
+
+    Real sessions run 79-97% idle, which would squash the tool-vs-model
+    comparison — the only part that says anything about the agent — into a
+    sliver of any bar drawn against wall clock.
+    """
+    health = _health(tmp_path)
+    split, head = health["time"], health["headline"]
+    assert split["active_ms"] == split["tool_ms"] + split["model_ms"]
+    assert head["active_ms"] == split["active_ms"]
+    # This fixture has a 90-minute gap; it must not be counted as work.
+    assert split["idle_ms"] > 0
+    assert split["active_ms"] < split["wall_ms"]
+
+
 def test_time_split_accounts_for_wall_clock(tmp_path: Path) -> None:
     split = _health(tmp_path)["time"]
     total = (

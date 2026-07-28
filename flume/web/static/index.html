@@ -177,26 +177,31 @@ function healthPanel(h) {
   // once ordinal position is held constant.
   // tool calls and wall are already in the card row directly above; the point
   // of this row is the four numbers that row cannot show.
+  // cache coverage (96.5-99.2%) and error rate (1-3%) barely move across
+  // sessions whose re-send factor spans 6x — they cost a slot and say nothing.
   const cards = [
     ["model requests", fmtNum(h.headline.model_requests)],
     ["peak context", fmtTok(h.headline.peak_context_tokens)],
     ["re-send factor", h.headline.resend_factor + "×"],
-    ["cache coverage", h.headline.cache_coverage_pct + "%"],
     ["redundancy", h.headline.redundancy_pct + "%"],
-    ["errors", h.headline.error_pct + "%"],
+    ["active time", fmtDur(h.headline.active_ms)],
   ].map(([l, n]) => `<div class="card"><div class="n">${n}</div>
       <div class="l">${l}</div></div>`).join("");
 
+  // Idle is excluded, not just de-emphasised: a session left open overnight is
+  // 97% idle, which would squash tool-vs-model — the only comparison that says
+  // anything about the run — into a sliver.
   const t = h.time;
-  const segs = [["tool", t.tool_ms], ["model", t.model_ms],
-                ["idle", t.idle_ms], ["unaccounted", t.unaccounted_ms]];
-  const total = t.wall_ms || 1;
+  const segs = [["tool", t.tool_ms], ["model", t.model_ms]];
+  const total = t.active_ms || 1;
   const bar = segs.map(([k, ms]) =>
     `<i style="width:${(100 * ms / total).toFixed(2)}%;background:${SPLIT_COLORS[k]}"
         title="${k}: ${fmtDur(ms)}"></i>`).join("");
   const key = segs.map(([k, ms]) =>
     `<span><span class="swatch" style="background:${SPLIT_COLORS[k]}"></span>${k}
-      <b>${fmtDur(ms)}</b> ${(100 * ms / total).toFixed(0)}%</span>`).join("");
+      <b>${fmtDur(ms)}</b> ${(100 * ms / total).toFixed(0)}%</span>`).join("")
+    + `<span class="dim">${fmtDur(t.active_ms)} active of
+        ${fmtDur(t.wall_ms)} open</span>`;
 
   const curve = h.context_curve;
   if (curve.length > 1) {
@@ -261,13 +266,37 @@ function healthPanel(h) {
     ]) : "";
 
   return `<h2>health</h2><div class="cards">${cards}</div>
-    <h2>where the time went</h2>
+    <h2>where the active time went</h2>
     <div class="split">${bar}</div><div class="split-key">${key}</div>
     <h2>context occupancy</h2>
     <div class="chart" id="ctx-chart"></div>
     ${toolRows ? "<h2>tools by time held</h2>" + toolRows : ""}
     ${expiryHtml}
     ${redHtml}`;
+}
+
+/** Links from a finding to the sessions it came from. */
+function findingSessions(f) {
+  let evidence = {};
+  try { evidence = JSON.parse(f.evidence || "{}"); } catch { /* not json */ }
+  // Per-session findings key on the session itself; aggregate ones carry
+  // their top contributors in evidence.
+  const isSessionId = /^[0-9a-f-]{36}$/i.test(f.fingerprint || "");
+  const contributions = evidence.contributions || [];
+  const ids = isSessionId
+    ? [f.fingerprint]
+    : (evidence.worst_sessions || []).slice(0, 5);
+  if (!ids.length) return "";
+
+  const unitOf = (sid) => {
+    const row = contributions.find((c) => c.session_id === sid);
+    if (!row) return "";
+    const [key, value] = Object.entries(row).find(([k]) => k !== "session_id") ?? [];
+    return key ? ` <span class="dim">(${fmtNum(value)} ${esc(key)})</span>` : "";
+  };
+  return `<div class="dim" style="margin-top:8px">from: ${
+    ids.map((sid) => sessionLink(sid) + unitOf(sid)).join(" · ")
+  }</div>`;
 }
 
 const fmtAgo = (ns) => {
@@ -325,7 +354,11 @@ async function viewInsights() {
       : f.first_seen_ns ? ` <span class="dim">new</span>` : "",
     `</div><strong>${esc(f.title)}</strong>`,
     `<div class="dim" style="margin:6px 0">${esc(f.detail ?? "")}</div>`,
-    `<div>&rarr; ${esc(f.action ?? "")}</div></div>`,
+    `<div>&rarr; ${esc(f.action ?? "")}</div>`,
+    // A finding that names a problem but not where it happened makes you
+    // re-derive the contributors by hand before you can act on it.
+    findingSessions(f),
+    `</div>`,
   ].join("")).join("");
   const empty = uncovered
     ? `<p class="dim">Nothing stored for this window yet. The daemon fills it
