@@ -49,8 +49,25 @@ def hook_events(
 
     query = require_sql(store, "hook_events").rows
 
+    # `text LIKE '%hook error:%'` alone reads all 1.2GB of tool_result text —
+    # a leading wildcard can use no index, so it is a guaranteed full scan
+    # (16s on a 3.5k-session store). The FTS index over the same column
+    # narrows 300k rows to a few hundred in microseconds.
+    #
+    # FTS narrows, it does not decide: it matches the tokenised phrase, so it
+    # also returns "hook error" without the trailing colon. Keeping the LIKE
+    # as a second predicate preserves exact semantics on the handful of rows
+    # that survive. Verified identical results, 16.12s -> 0.00s.
+    fts = query(
+        "SELECT 1 AS ok FROM sqlite_master WHERE name = 'contents_fts'"
+    )
     conditions = ["c.kind = 'tool_result'", "c.text LIKE '%hook error:%'"]
+    joins = "FROM contents c JOIN sessions s USING (session_id)"
     params: list[Any] = []
+    if fts:
+        joins += " JOIN contents_fts f ON f.rowid = c.id"
+        conditions.append("contents_fts MATCH ?")
+        params.append('"hook error"')
     if since_ns is not None:
         conditions.append("s.started_at_ns >= ?")
         params.append(since_ns)
@@ -61,7 +78,7 @@ def hook_events(
         f"""
         SELECT c.session_id, c.span_id, c.ts_ns, c.text,
                s.project, s.experiment, tc.name AS tool_name
-        FROM contents c JOIN sessions s USING (session_id)
+        {joins}
         LEFT JOIN tool_calls tc ON tc.span_id = c.span_id
         WHERE {' AND '.join(conditions)}
         ORDER BY c.ts_ns DESC LIMIT ?

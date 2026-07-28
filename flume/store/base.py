@@ -225,10 +225,16 @@ class AnalyzedStore(ABC):
         tool_names: list[str],
         source: str | None = None,
         since_ns: int | None = None,
-        like: str | None = None,
     ) -> list[dict[str, Any]]:
         """(session_id, text) rows of full tool arguments, for offline
-        clustering (e.g. throwaway-script detection)."""
+        clustering (e.g. throwaway-script detection).
+
+        Deliberately no `like` filter. Substring matching over argument text
+        needs a leading wildcard, so it cannot use an index and scans every
+        row — measurably slower than shipping the rows to the caller and
+        filtering in Python (5.96s vs 2.47s over a 30-day window). Callers
+        that need to match text should use `search`, which goes through FTS.
+        """
 
     @abstractmethod
     def upsert_findings(self, findings: list[dict[str, Any]]) -> None:

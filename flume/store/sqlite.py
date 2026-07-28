@@ -610,7 +610,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
         tool_names: list[str],
         source: str | None = None,
         since_ns: int | None = None,
-        like: str | None = None,
     ) -> list[dict[str, Any]]:
         marks = ", ".join("?" for _ in tool_names)
         scope = ""
@@ -621,9 +620,6 @@ class SqliteAnalyzedStore(AnalyzedStore):
         if since_ns is not None:
             scope += " AND s.started_at_ns >= ?"
             scope_params.append(since_ns)
-
-        # Applied inside the window so it filters before materializing.
-        like_clause = " AND c.text LIKE ?" if like else ""
 
         if scope:
             # Windowed: narrow to the scoped sessions FIRST, then look up
@@ -638,15 +634,12 @@ class SqliteAnalyzedStore(AnalyzedStore):
                 "  FROM sessions s "
                 "  JOIN contents c ON c.session_id = s.session_id "
                 "   AND c.kind = 'tool_arguments' "
-                f"  WHERE 1=1{scope}{like_clause}"
+                f"  WHERE 1=1{scope}"
                 ") "
                 "SELECT win.session_id, win.text FROM win "
                 f"JOIN tool_calls t ON t.span_id = win.span_id AND t.name IN ({marks})"
             )
-            params: list[Any] = [*scope_params]
-            if like:
-                params.append(like)
-            params.extend(tool_names)
+            params: list[Any] = [*scope_params, *tool_names]
         else:
             # Unscoped, the window IS the table, and materializing 300k rows of
             # argument text costs more than it saves (21.8s vs 12.9s measured).
@@ -656,10 +649,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
                 "JOIN tool_calls t ON t.span_id = c.span_id "
                 f"WHERE c.kind = 'tool_arguments' AND t.name IN ({marks})"
             )
-            sql += like_clause
             params = list(tool_names)
-            if like:
-                params.append(like)
         return self.rows(sql, tuple(params))
 
     # -- experiments --------------------------------------------------------
