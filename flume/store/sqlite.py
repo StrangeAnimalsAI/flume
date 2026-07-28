@@ -621,36 +621,30 @@ class SqliteAnalyzedStore(AnalyzedStore):
             scope += " AND s.started_at_ns >= ?"
             scope_params.append(since_ns)
 
-        if scope:
-            # Windowed: narrow to the scoped sessions FIRST, then look up
-            # tool_calls by primary key. Left to itself the planner enters via
-            # idx_tools_name and walks every Bash/exec_command row ever
-            # recorded — 184k rows to return 2k. Materializing the window
-            # forces the small side first: 11.2s -> 2.5s on a 3.5k-session
-            # store. Join order alone does not do it; the planner reorders.
-            sql = (
-                "WITH win AS MATERIALIZED ("
-                "  SELECT c.session_id, c.span_id, c.text "
-                "  FROM sessions s "
-                "  JOIN contents c ON c.session_id = s.session_id "
-                "   AND c.kind = 'tool_arguments' "
-                f"  WHERE 1=1{scope}"
-                ") "
-                "SELECT win.session_id, win.text FROM win "
-                f"JOIN tool_calls t ON t.span_id = win.span_id AND t.name IN ({marks})"
-            )
-            params: list[Any] = [*scope_params, *tool_names]
-        else:
-            # Unscoped, the window IS the table, and materializing 300k rows of
-            # argument text costs more than it saves (21.8s vs 12.9s measured).
-            sql = (
-                "SELECT c.session_id, c.text "
-                "FROM contents c "
-                "JOIN tool_calls t ON t.span_id = c.span_id "
-                f"WHERE c.kind = 'tool_arguments' AND t.name IN ({marks})"
-            )
-            params = list(tool_names)
-        return self.rows(sql, tuple(params))
+        # Resolve WHICH spans qualify before touching any argument text.
+        #
+        # The obvious shape — join contents to tool_calls and filter — makes
+        # the text the thing being filtered: over a 30-day window it reads
+        # 47k rows / 30.4MB of arguments to keep 11.5k / 5.5MB, and the
+        # discarded 25MB is the entire cost. Selecting bare span_ids first
+        # costs nothing (no text column), then contents is hit by span_id for
+        # exactly the rows that survive. Measured on a 3.5k-session store,
+        # 30-day window: 2.62s -> 0.16s, byte-identical results.
+        #
+        # Unscoped the two are equivalent (~11s either way, since the window
+        # is the table), so this is the only shape rather than a special case.
+        sql = (
+            "WITH spans AS MATERIALIZED ("
+            "  SELECT t.span_id FROM sessions s "
+            f"  JOIN tool_calls t ON t.session_id = s.session_id "
+            f"   AND t.name IN ({marks}) "
+            f"  WHERE 1=1{scope}"
+            ") "
+            "SELECT c.session_id, c.text FROM spans "
+            "JOIN contents c ON c.span_id = spans.span_id "
+            " AND c.kind = 'tool_arguments'"
+        )
+        return self.rows(sql, (*tool_names, *scope_params))
 
     # -- experiments --------------------------------------------------------
     #
