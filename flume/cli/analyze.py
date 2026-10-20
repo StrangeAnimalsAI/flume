@@ -174,6 +174,10 @@ def _parser() -> argparse.ArgumentParser:
     ep.add_argument("--source", help="Scope: only sessions from this source.")
     ep.add_argument("--project", help="Scope: only this project label.")
     ep.add_argument(
+        "--cwd",
+        help="Scope: only sessions whose cwd is this directory or beneath it.",
+    )
+    ep.add_argument(
         "--started",
         help="Window start: ISO date (2026-07-02) or lookback (7d). Default: now.",
     )
@@ -428,6 +432,7 @@ def _cmd_experiment_start(store, args) -> dict[str, Any]:
         hypothesis=args.hypothesis,
         source=args.source,
         project=args.project,
+        cwd=args.cwd,
         started_at_ns=_parse_when(args.started),
     )
     row["tagged_sessions"] = len(store.experiment_session_ids(args.name))
@@ -920,6 +925,7 @@ def _render(command: str | None, result: Any) -> None:
                         "ended": _ts(r["ended_at_ns"]),
                         "source": r["source"] or "-",
                         "project": r["project"] or "-",
+                        "cwd": r["cwd"] or "-",
                         "sessions": r["sessions"],
                         "hypothesis": (r["hypothesis"] or "")[:50],
                     }

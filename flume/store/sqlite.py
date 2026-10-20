@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS experiments (
     hypothesis TEXT,
     source TEXT,
     project TEXT,
+    cwd TEXT,
     started_at_ns INTEGER NOT NULL,
     ended_at_ns INTEGER,
     created_at_ns INTEGER NOT NULL
@@ -221,6 +222,12 @@ class SqliteAnalyzedStore(AnalyzedStore):
                 "CREATE INDEX IF NOT EXISTS idx_turns_request "
                 "ON turns (session_id, request_id)"
             )
+        experiment_cols = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(experiments)")
+        }
+        if "cwd" not in experiment_cols:
+            with self._conn:
+                self._conn.execute("ALTER TABLE experiments ADD COLUMN cwd TEXT")
 
         # `window` joined the findings primary key, and SQLite cannot ALTER a
         # primary key — the table has to be rebuilt. It is small (tens of rows)
@@ -300,6 +307,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
         session["experiment"] = self._experiment_tags(
             session.get("source"),
             session.get("project"),
+            session.get("cwd"),
             session.get("started_at_ns"),
         )
         with self._conn:
@@ -683,8 +691,8 @@ class SqliteAnalyzedStore(AnalyzedStore):
 
     # -- experiments --------------------------------------------------------
     #
-    # An experiment is a named time window, optionally scoped to a source
-    # and/or project. Sessions whose start falls inside an experiment's
+    # An experiment is a named time window, optionally scoped to a source,
+    # project and/or directory (cwd equal to it or beneath it). Sessions whose start falls inside an experiment's
     # window (and match its scope) carry its name in sessions.experiment —
     # comma-joined when windows overlap. Tags are recomputed from the
     # experiments table alone, so retagging is idempotent and re-ingesting
@@ -697,6 +705,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
         hypothesis: str | None = None,
         source: str | None = None,
         project: str | None = None,
+        cwd: str | None = None,
         started_at_ns: int | None = None,
         ended_at_ns: int | None = None,
     ) -> dict[str, Any]:
@@ -707,6 +716,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
             "hypothesis": hypothesis,
             "source": source,
             "project": project,
+            "cwd": os.path.expanduser(cwd).rstrip("/") if cwd else None,
             "started_at_ns": started_at_ns or now,
             "ended_at_ns": ended_at_ns,
             "created_at_ns": now,
@@ -744,17 +754,19 @@ class SqliteAnalyzedStore(AnalyzedStore):
             """
         )
 
-    def experiment_session_ids(self, name: str) -> list[str]:
+    def experiment_session_ids(
+        self, name: str, *, subagents: bool = False
+    ) -> list[str]:
         return [
             row["session_id"]
             for row in self.rows(
                 """
                 SELECT session_id FROM sessions
-                WHERE is_subagent = 0
+                WHERE is_subagent = ?
                     AND ',' || COALESCE(experiment, '') || ',' LIKE ?
                 ORDER BY started_at_ns
                 """,
-                (f"%,{name},%",),
+                (int(subagents), f"%,{name},%"),
             )
         ]
 
@@ -762,12 +774,13 @@ class SqliteAnalyzedStore(AnalyzedStore):
         """Recompute sessions.experiment for every session. Returns rows changed."""
         changed = 0
         rows = self.rows(
-            "SELECT session_id, source, project, started_at_ns, experiment FROM sessions"
+            "SELECT session_id, source, project, cwd, started_at_ns, experiment "
+            "FROM sessions"
         )
         with self._conn:
             for row in rows:
                 tags = self._experiment_tags(
-                    row["source"], row["project"], row["started_at_ns"]
+                    row["source"], row["project"], row["cwd"], row["started_at_ns"]
                 )
                 if tags != row["experiment"]:
                     self._conn.execute(
@@ -781,6 +794,7 @@ class SqliteAnalyzedStore(AnalyzedStore):
         self,
         source: str | None,
         project: str | None,
+        cwd: str | None,
         started_at_ns: int | None,
     ) -> str | None:
         if started_at_ns is None:
@@ -788,13 +802,18 @@ class SqliteAnalyzedStore(AnalyzedStore):
         matched = [
             row["name"]
             for row in self.rows(
-                "SELECT name, source, project, started_at_ns, ended_at_ns "
+                "SELECT name, source, project, cwd, started_at_ns, ended_at_ns "
                 "FROM experiments ORDER BY name"
             )
             if started_at_ns >= row["started_at_ns"]
             and (row["ended_at_ns"] is None or started_at_ns <= row["ended_at_ns"])
             and (row["source"] is None or row["source"] == source)
             and (row["project"] is None or row["project"] == project)
+            and (
+                not row["cwd"]
+                or (cwd is not None
+                    and (cwd == row["cwd"] or cwd.startswith(row["cwd"] + "/")))
+            )
         ]
         return ",".join(matched) if matched else None
 

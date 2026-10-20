@@ -9,7 +9,9 @@ The load-bearing guarantees:
 """
 from __future__ import annotations
 
-from flume.analysis.experiments import compare_experiment
+import sqlite3
+
+from flume.analysis.experiments import _group_metrics, compare_experiment
 from flume.analysis.navtime import classify_tool, session_nav_shares
 from flume.store.base import ContentRow, SessionBundle
 from flume.store.sqlite import SqliteAnalyzedStore
@@ -19,13 +21,13 @@ BASE_NS = 1_780_000_000 * 1_000_000_000  # 2026-06-08
 
 
 def _bundle(session_id, started_ns, *, project="tools/demo", source="claude-code",
-            turns=(), tool_calls=()):
+            cwd=None, is_subagent=0, turns=(), tool_calls=()):
     session = {
         "session_id": session_id,
         "source": source,
-        "cwd": f"/Users/alex/Code/{project}",
+        "cwd": cwd or f"/Users/alex/Code/{project}",
         "project": project,
-        "is_subagent": 0,
+        "is_subagent": is_subagent,
         "started_at_ns": started_ns,
         "ended_at_ns": started_ns + HOUR_NS,
         "wall_ms": 3_600_000,
@@ -53,9 +55,10 @@ def _bundle(session_id, started_ns, *, project="tools/demo", source="claude-code
     )
 
 
-def _turn(session_id, index, at_ns):
+def _turn(session_id, index, at_ns, request_id=None):
     return {
         "span_id": f"{session_id}-turn-{index}",
+        "request_id": request_id,
         "turn_index": index,
         "started_at_ns": at_ns,
         "ended_at_ns": at_ns,
@@ -127,6 +130,53 @@ def test_scope_filters_restrict_tagging(tmp_path):
         assert _session_row(store, "match")["experiment"] == "scoped"
         assert _session_row(store, "other-project")["experiment"] is None
         assert _session_row(store, "other-source")["experiment"] is None
+
+
+def test_cwd_scope_matches_the_directory_and_its_children(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/Users/alex")
+    with _store(tmp_path) as store:
+        row = store.create_experiment(
+            "scoped", cwd="~/Code/work/acme/", started_at_ns=BASE_NS
+        )
+        assert row["cwd"] == "/Users/alex/Code/work/acme"
+        for session_id, cwd in [
+            ("exact", "/Users/alex/Code/work/acme"),
+            ("child", "/Users/alex/Code/work/acme/apps/rag"),
+            ("sibling", "/Users/alex/Code/work/acme-other"),
+            ("parent", "/Users/alex/Code/work"),
+        ]:
+            store.ingest_session(_bundle(session_id, BASE_NS + 1, cwd=cwd))
+
+        assert sorted(store.experiment_session_ids("scoped")) == ["child", "exact"]
+        assert _session_row(store, "sibling")["experiment"] is None
+        assert _session_row(store, "parent")["experiment"] is None
+        assert store.list_experiments()[0]["cwd"] == "/Users/alex/Code/work/acme"
+
+
+def test_retag_applies_cwd_scope_to_existing_sessions(tmp_path):
+    with _store(tmp_path) as store:
+        store.ingest_session(_bundle("inside", BASE_NS + 1, cwd="/work/acme/apps"))
+        store.ingest_session(_bundle("outside", BASE_NS + 2, cwd="/work/acme-other"))
+        store.create_experiment("late", cwd="/work/acme", started_at_ns=BASE_NS)
+        assert _session_row(store, "inside")["experiment"] == "late"
+        assert _session_row(store, "outside")["experiment"] is None
+
+
+def test_open_adds_cwd_column_to_an_older_experiments_table(tmp_path):
+    path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE experiments (name TEXT PRIMARY KEY, hypothesis TEXT, "
+        "source TEXT, project TEXT, started_at_ns INTEGER NOT NULL, "
+        "ended_at_ns INTEGER, created_at_ns INTEGER NOT NULL)"
+    )
+    conn.execute("INSERT INTO experiments VALUES ('old', NULL, NULL, NULL, 1, NULL, 1)")
+    conn.commit()
+    conn.close()
+
+    with SqliteAnalyzedStore(path) as store:
+        assert store.get_experiment("old")["cwd"] is None
+        assert store.create_experiment("new", cwd="/a/b")["cwd"] == "/a/b"
 
 
 def test_retag_backfills_existing_sessions_and_stop_untags_later_ones(tmp_path):
@@ -263,6 +313,101 @@ def test_compare_experiment_baseline_vs_tagged(tmp_path):
     assert groups["baseline"]["nav_calls"] == 6
     assert groups["experiment"]["nav_calls"] == 0
     assert groups["experiment"]["cache_hit"] == 0.9
+
+
+def test_compare_baseline_respects_cwd_scope(tmp_path):
+    day_ns = 86_400 * 1_000_000_000
+    with _store(tmp_path) as store:
+        store.ingest_session(_bundle("base-in", BASE_NS - day_ns, cwd="/work/acme/apps"))
+        store.ingest_session(_bundle("base-out", BASE_NS - day_ns, cwd="/work/acme-other"))
+        store.create_experiment("scoped", cwd="/work/acme", started_at_ns=BASE_NS)
+        store.ingest_session(_bundle("exp-in", BASE_NS + day_ns, cwd="/work/acme"))
+        store.ingest_session(_bundle("exp-out", BASE_NS + day_ns, cwd="/work/acme-other"))
+
+        groups = {g["group"]: g for g in compare_experiment(store, "scoped")["groups"]}
+
+    assert groups["baseline"]["sessions"] == 1
+    assert groups["experiment"]["sessions"] == 1
+
+
+def test_compare_reports_subagent_groups_separately(tmp_path):
+    day_ns = 86_400 * 1_000_000_000
+    with _store(tmp_path) as store:
+        store.ingest_session(_bundle("base-main", BASE_NS - day_ns))
+        store.ingest_session(_bundle("base-sub-1", BASE_NS - day_ns, is_subagent=1))
+        store.ingest_session(_bundle("base-sub-2", BASE_NS - day_ns, is_subagent=1))
+        store.create_experiment("tooling", started_at_ns=BASE_NS)
+        store.ingest_session(_bundle("exp-main", BASE_NS + day_ns))
+        store.ingest_session(_bundle("exp-sub", BASE_NS + day_ns, is_subagent=1))
+
+        result = compare_experiment(store, "tooling")
+
+        assert store.experiment_session_ids("tooling") == ["exp-main"]
+        assert store.experiment_session_ids("tooling", subagents=True) == ["exp-sub"]
+
+    assert [g["group"] for g in result["groups"]] == [
+        "baseline", "experiment", "baseline (subagents)", "experiment (subagents)",
+    ]
+    assert [g["sessions"] for g in result["groups"]] == [1, 1, 2, 1]
+
+
+def test_nav_calls_per_request_counts_parallel_reads_once_per_request(tmp_path):
+    second = 1_000_000_000
+    read = '{"file_path": "/repo/%s.py"}'
+    turns = [
+        _turn("batch", 0, BASE_NS - second, request_id="req-1"),  # thinking row
+        _turn("batch", 1, BASE_NS, request_id="req-1"),           # 3 parallel reads
+        _turn("batch", 2, BASE_NS + 40 * second, request_id="req-2"),  # 1 read
+        _turn("batch", 3, BASE_NS + 80 * second),                 # edit: no nav
+    ]
+    tool_calls = [
+        _call("batch", 0, BASE_NS, "Read", read % "a"),
+        _call("batch", 1, BASE_NS, "Read", read % "b"),
+        _call("batch", 2, BASE_NS, "Read", read % "c"),
+        _call("batch", 3, BASE_NS + 40 * second, "Read", read % "d"),
+        _call("batch", 4, BASE_NS + 80 * second, "Edit", read % "d"),
+    ]
+    with _store(tmp_path) as store:
+        store.ingest_session(
+            _bundle("batch", BASE_NS, turns=turns, tool_calls=tool_calls)
+        )
+        metrics = _group_metrics(store, "g", ["batch"], source=None)
+
+    assert metrics["nav_calls"] == 4
+    assert metrics["nav_requests"] == 2
+    assert metrics["nav_calls_per_request"] == 2.0
+
+
+def test_nav_calls_per_request_is_skipped_for_sources_without_matching_turns(tmp_path):
+    cmd = '{"cmd":"rg -n foo src"}'
+    with _store(tmp_path) as store:
+        store.ingest_session(_bundle(
+            "cx", BASE_NS, source="codex",
+            turns=[_turn("cx", 0, BASE_NS), _turn("cx", 1, BASE_NS)],
+            tool_calls=[_call("cx", 0, BASE_NS, "exec_command", cmd)],
+        ))
+        metrics = _group_metrics(store, "g", ["cx"], source=None)
+
+    assert metrics["nav_calls"] == 1
+    assert metrics["nav_requests"] == 0
+    assert metrics["nav_calls_per_request"] is None
+
+
+def test_docnav_probes_counts_calls_mentioning_docnav(tmp_path):
+    second = 1_000_000_000
+    tool_calls = [
+        _call("probe", 0, BASE_NS, "Read", '{"file_path": "/repo/_docnav/index.md"}'),
+        _call("probe", 1, BASE_NS + second, "Bash",
+              '{"command": "grep -n Foo _docnav/symbols-a.md"}'),
+        _call("probe", 2, BASE_NS + 2 * second, "Bash",
+              '{"command": "grep -n docnav README.md"}'),
+        _call("probe", 3, BASE_NS + 3 * second, "Read", '{"file_path": "/repo/a.py"}'),
+    ]
+    with _store(tmp_path) as store:
+        store.ingest_session(_bundle("probe", BASE_NS, tool_calls=tool_calls))
+        metrics = _group_metrics(store, "g", ["probe"], source=None)
+
+    assert metrics["docnav_probes"] == 2
 
 
 def test_read_used_share_derived_from_edits_and_mentions(tmp_path):

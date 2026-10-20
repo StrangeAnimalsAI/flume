@@ -5,9 +5,12 @@ time window + scope. `compare_experiment` puts numbers side by side:
 
 - baseline = sessions matching the same scope that STARTED in the
   `baseline_days` before the experiment began and carry no tag for it
+- subagent sessions form their own pair of groups, so delegated work never
+  dilutes the main-session numbers
 - metrics chosen to answer "did the tooling change speed things up":
   navigation share of active time (the headline), bytes per nav call,
-  duplicate reads, cache hit, session shape
+  nav calls per model request (batching), duplicate reads, cache hit,
+  session shape
 
 Deltas are directional evidence, not significance tests — session counts
 here are small and workloads shift week to week. Read them with the n.
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import re
 import statistics
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +27,8 @@ from flume.analysis.navtime import classify_tool, nav_summary, session_nav_share
 
 DAY_NS = 86_400 * 1_000_000_000
 _FILE_ARG = re.compile(r'"file_path":\s*"([^"]+)"')
+# Only claude-code tool calls and turns share a start timestamp; codex's don't.
+_REQUEST_SOURCE = "claude-code"
 
 
 def compare_experiment(
@@ -32,15 +38,38 @@ def compare_experiment(
     if experiment is None:
         raise KeyError(f"no experiment named {name!r}")
 
-    experiment_ids = store.experiment_session_ids(name)
+    groups = []
+    for subagents in (False, True):
+        suffix = " (subagents)" if subagents else ""
+        groups.append(_group_metrics(
+            store, f"baseline{suffix}",
+            _baseline_ids(store, experiment, baseline_days, subagents=subagents),
+            source=experiment["source"],
+        ))
+        groups.append(_group_metrics(
+            store, f"experiment{suffix}",
+            store.experiment_session_ids(name, subagents=subagents),
+            source=experiment["source"],
+        ))
 
-    conditions = ["s.is_subagent = 0",
+    return {
+        "experiment": experiment,
+        "baseline_days": baseline_days,
+        "groups": groups,
+    }
+
+
+def _baseline_ids(
+    store, experiment: dict[str, Any], baseline_days: int, *, subagents: bool
+) -> list[str]:
+    conditions = ["s.is_subagent = ?",
                   "s.started_at_ns >= ?", "s.started_at_ns < ?",
                   "',' || COALESCE(s.experiment, '') || ',' NOT LIKE ?"]
     params: list[Any] = [
+        int(subagents),
         experiment["started_at_ns"] - baseline_days * DAY_NS,
         experiment["started_at_ns"],
-        f"%,{name},%",
+        f"%,{experiment['name']},%",
     ]
     if experiment["source"]:
         conditions.append("s.source = ?")
@@ -48,24 +77,17 @@ def compare_experiment(
     if experiment["project"]:
         conditions.append("s.project = ?")
         params.append(experiment["project"])
-    baseline_ids = [
+    if experiment["cwd"]:
+        conditions.append("(s.cwd = ? OR substr(s.cwd, 1, ?) = ?)")
+        params += [experiment["cwd"], len(experiment["cwd"]) + 1,
+                   experiment["cwd"] + "/"]
+    return [
         row["session_id"]
         for row in store.rows(
             f"SELECT s.session_id FROM sessions s WHERE {' AND '.join(conditions)}",
             tuple(params),
         )
     ]
-
-    return {
-        "experiment": experiment,
-        "baseline_days": baseline_days,
-        "groups": [
-            _group_metrics(store, "baseline", baseline_ids,
-                           source=experiment["source"]),
-            _group_metrics(store, "experiment", experiment_ids,
-                           source=experiment["source"]),
-        ],
-    }
 
 
 def _group_metrics(
@@ -86,21 +108,36 @@ def _group_metrics(
         tuple(session_ids),
     )
 
-    nav_calls = nav_chars = 0
+    # A model request is the turn rows sharing COALESCE(request_id, span_id);
+    # a tool call belongs to the request whose turn starts when it does.
+    nav_calls = nav_chars = docnav_probes = 0
+    nav_per_request: Counter[tuple[str, str]] = Counter()
     for row in store.rows(
         f"""
-        SELECT t.name, t.args_preview, t.result_chars, s.source
+        SELECT t.session_id, t.name, t.args_preview, t.result_chars, s.source,
+               r.request_key
         FROM tool_calls t JOIN sessions s USING (session_id)
+        LEFT JOIN (
+            SELECT session_id, started_at_ns,
+                   MIN(COALESCE(request_id, span_id)) AS request_key
+            FROM turns WHERE session_id IN ({marks})
+            GROUP BY session_id, started_at_ns
+        ) r ON r.session_id = t.session_id AND r.started_at_ns = t.started_at_ns
         WHERE t.session_id IN ({marks})
         """,
-        tuple(session_ids),
+        tuple(session_ids) * 2,
     ):
+        if "_docnav" in (row["args_preview"] or ""):
+            docnav_probes += 1
         if (
             classify_tool(row["name"], row["args_preview"], row["source"])
             == "navigation"
         ):
             nav_calls += 1
             nav_chars += row["result_chars"] or 0
+            if row["request_key"] is not None and row["source"] == _REQUEST_SOURCE:
+                nav_per_request[(row["session_id"], row["request_key"])] += 1
+    nav_requests = len(nav_per_request)
 
     duplicate_reads = (store.row(
         f"""
@@ -131,6 +168,10 @@ def _group_metrics(
         "nav_hours": summary.get("nav_hours"),
         "nav_calls": nav_calls,
         "kb_per_nav_call": round(nav_chars / nav_calls / 1000, 1) if nav_calls else None,
+        "nav_calls_per_request": round(sum(nav_per_request.values()) / nav_requests, 2)
+        if nav_requests else None,
+        "nav_requests": nav_requests,
+        "docnav_probes": docnav_probes,
         "duplicate_reads": duplicate_reads,
         "read_used_share": used_share,
         "cache_hit": round((shape["cache_read"] or 0) / denominator, 3)

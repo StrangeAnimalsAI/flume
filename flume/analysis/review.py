@@ -125,7 +125,11 @@ def run_review(
             continue
         # `measured` is per group (baseline vs experiment); the weaker arm
         # decides whether the comparison can carry weight.
-        measured = [_as_int(g.get("measured")) for g in comparison.get("groups") or []]
+        measured = [
+            _as_int(g.get("measured"))
+            for g in comparison.get("groups") or []
+            if g["group"] in ("baseline", "experiment")
+        ]
         comparison["directional_only"] = not measured or min(measured) < min_sessions
         experiments.append(comparison)
 
