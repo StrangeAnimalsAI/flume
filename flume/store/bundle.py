@@ -19,7 +19,7 @@ Span = dict[str, Any]
 # Provenance stamp written to every session row. Bump whenever flume/sources/*
 # or this module change what they derive from raw bytes;
 # `flume analyze rebuild` then re-ingests older rows.
-PIPELINE_VERSION = 5
+PIPELINE_VERSION = 6
 
 _ARGS_PREVIEW_MAX = 500
 
@@ -125,6 +125,7 @@ def _billed_sum(turns: list[dict[str, Any]], field: str) -> int:
     repeats the same usage object on each, so a plain sum double-counts every
     response that had both thinking and text. Collapse on request_id first;
     rows without one (codex) are already per-request and keep their own key.
+    An unknown (None) value adds nothing, as SQL's SUM skips NULL.
     """
     per_request: dict[str, int] = {}
     for turn in turns:
@@ -146,7 +147,8 @@ def _turn_row(span: Span) -> dict[str, Any]:
         "duration_ms": int(attrs.get("turn.duration_ms") or 0)
         or max(0, (int(span["end_unix_nano"]) - int(span["start_unix_nano"])) // 1_000_000),
         "input_tokens": int(attrs.get("gen_ai.usage.input_tokens") or 0),
-        "output_tokens": int(attrs.get("gen_ai.usage.output_tokens") or 0),
+        # None is unknown (a mid-stream line), not zero; the store keeps NULL.
+        "output_tokens": _optional_int(attrs.get("gen_ai.usage.output_tokens")),
         "cache_read_tokens": int(attrs.get("gen_ai.usage.cache_read_input_tokens") or 0),
         "cache_creation_tokens": int(
             attrs.get("gen_ai.usage.cache_creation_input_tokens") or 0
@@ -155,6 +157,10 @@ def _turn_row(span: Span) -> dict[str, Any]:
         "thinking_chars": int(attrs.get("turn.thinking_chars") or 0),
         "text_chars": int(attrs.get("turn.text_chars") or 0),
     }
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
 
 
 def _tool_row(span: Span) -> dict[str, Any]:

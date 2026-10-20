@@ -91,6 +91,8 @@ def turn_requests_view_sql() -> str:
     (codex) degrades to one row per turn — its rows are already per-request.
     Usage columns take MAX because they are identical across a request's rows;
     thinking/text chars take SUM because they genuinely differ per block.
+    output_tokens is NULL on rows written mid-stream, so MAX takes the row with
+    the final count, and stays NULL when no row of the request has one.
     """
     return (
         "CREATE VIEW IF NOT EXISTS turn_requests AS SELECT "

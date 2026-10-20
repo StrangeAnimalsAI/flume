@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS turns (
     ended_at_ns INTEGER,
     duration_ms INTEGER,
     input_tokens INTEGER,
+    -- NULL when unknown: a claude-code line written before its response
+    -- finished streaming carries only a placeholder output count.
     output_tokens INTEGER,
     cache_read_tokens INTEGER,
     cache_creation_tokens INTEGER,

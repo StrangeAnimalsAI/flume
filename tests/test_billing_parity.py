@@ -104,6 +104,71 @@ def test_turn_index_is_populated(tmp_path: Path) -> None:
     assert [t["turn_index"] for t in bundle.turns] == [0, 1, 2]
 
 
+def _mid_stream_events() -> list[dict]:
+    """Two requests written the way Claude Code writes subagent transcripts.
+
+    A line written before the response finished streaming has a null
+    stop_reason and a placeholder output count (8 here). req_FINAL ends with a
+    line that has the real count; no line of req_OPEN does.
+    """
+    placeholder = {**_USAGE, "output_tokens": 8}
+    events: list[dict] = [_split_response_events()[0]]
+    for i, (request_id, stop_reason, usage) in enumerate(
+        [
+            ("req_FINAL", None, placeholder),
+            ("req_FINAL", "tool_use", _USAGE),
+            ("req_OPEN", None, placeholder),
+            ("req_OPEN", None, placeholder),
+        ]
+    ):
+        events.append(
+            {
+                "type": "assistant",
+                "uuid": f"asst-{i}",
+                "requestId": request_id,
+                "timestamp": f"2026-04-20T10:00:0{i + 1}.000Z",
+                "message": {
+                    "role": "assistant",
+                    "id": f"msg_{request_id}",
+                    "model": "claude-opus-5",
+                    "content": [{"type": "text", "text": "working"}],
+                    "stop_reason": stop_reason,
+                    "usage": usage,
+                },
+            }
+        )
+    return events
+
+
+def test_mid_stream_output_is_unknown(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, _mid_stream_events(), stem="agent-a1")
+    assert bundle is not None
+    assert [t["output_tokens"] for t in bundle.turns] == [None, 500, None, None]
+    session = bundle.session
+    # The placeholders are not counted; only req_FINAL's real count is.
+    assert session["output_tokens"] == _USAGE["output_tokens"]
+    # Input-side counts are final on every line, so both requests keep them.
+    assert session["cache_read_tokens"] == 2 * _USAGE["cache_read_input_tokens"]
+
+
+def test_request_view_reports_unknown_output_as_null(tmp_path: Path) -> None:
+    from flume.ingest.write import ingest_path
+    from flume.sources import get_adapter
+    from flume.store.base import open_analyzed_store
+
+    path = tmp_path / "agent-a1.jsonl"
+    path.write_text("\n".join(json.dumps(e) for e in _mid_stream_events()) + "\n")
+    with open_analyzed_store(f"sqlite://{tmp_path}/store.sqlite3") as store:
+        ingest_path(store, get_adapter("claude-code"), path)
+        rows = store.rows(
+            "SELECT request_key, output_tokens FROM turn_requests ORDER BY request_key"
+        )
+    assert rows == [
+        {"request_key": "req_FINAL", "output_tokens": 500},
+        {"request_key": "req_OPEN", "output_tokens": None},
+    ]
+
+
 def _naive_usage(raw: str) -> dict[str, int]:
     """Independent reimplementation: dedupe on requestId, take each once.
 
@@ -120,7 +185,10 @@ def _naive_usage(raw: str) -> dict[str, int]:
         if event.get("type") != "assistant":
             continue
         message = event.get("message") or {}
-        usage = message.get("usage") or {}
+        usage = dict(message.get("usage") or {})
+        if "stop_reason" in message and message["stop_reason"] is None:
+            # Written mid-stream: the output count is a placeholder.
+            usage["output_tokens"] = 0
         key = event.get("requestId") or event.get("uuid")
         prior = per_request.get(key, {})
         per_request[key] = {

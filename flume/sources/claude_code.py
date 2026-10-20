@@ -165,6 +165,12 @@ def _turn_span(
                 text_chars += len(blk.get("text") or "")
     turn_uuid = ev.get("uuid") or str(ts_ns)
     start_ns = ts_ns - duration_ms * 1_000_000
+    # A line written before its response finished streaming has a null
+    # stop_reason and the message_start usage: input and cache counts are
+    # final, output_tokens is a placeholder. Record that output as unknown.
+    # A later line of the same request with a stop_reason has the real count;
+    # most subagent requests have none (Claude Code 2.1.286 onward).
+    streaming = "stop_reason" in msg and msg["stop_reason"] is None
     span: Span = {
         "name": "claude_code.llm_request",
         "trace_id": trace_id,
@@ -181,7 +187,9 @@ def _turn_span(
             # requestId is what ties them back to the single billed request.
             "gen_ai.request.id": ev.get("requestId"),
             "gen_ai.usage.input_tokens": usage.get("input_tokens") or 0,
-            "gen_ai.usage.output_tokens": usage.get("output_tokens") or 0,
+            "gen_ai.usage.output_tokens": (
+                None if streaming else usage.get("output_tokens") or 0
+            ),
             "gen_ai.usage.cache_read_input_tokens": usage.get("cache_read_input_tokens") or 0,
             "gen_ai.usage.cache_creation_input_tokens": usage.get("cache_creation_input_tokens") or 0,
             "turn.thinking_chars": thinking_chars,
