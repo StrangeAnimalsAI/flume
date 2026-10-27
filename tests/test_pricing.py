@@ -29,6 +29,9 @@ def test_point_releases_do_not_inherit_the_family_rate(tmp_path: Path) -> None:
     opus = book.for_model("claude-opus-5-5")
     assert (opus.input, opus.output) == (4.0, 20.0)
     assert opus.cache_read == pytest.approx(0.20)
+    assert book.for_model("claude-sonnet-5-5").cache_read == pytest.approx(0.10)
+    assert book.for_model("claude-fable-5-1").cache_read == pytest.approx(0.25)
+    assert book.for_model("claude-mythos-5-1").cache_read == pytest.approx(0.25)
     assert book.for_model("claude-haiku-5-5") == Price(0.10, 0.50)
 
 
