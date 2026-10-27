@@ -25,9 +25,10 @@ def _args(**over):
     return argparse.Namespace(**base)
 
 
-def _turn(session_id, index, model, *, inp=0, out=0, cr=0, cc=0):
+def _turn(session_id, index, model, *, inp=0, out=0, cr=0, cc=0, request_id=None):
     return {
         "span_id": f"{session_id}-t{index}", "turn_index": index, "model": model,
+        "request_id": request_id,
         "started_at_ns": BASE_NS, "ended_at_ns": BASE_NS, "duration_ms": 0,
         "input_tokens": inp, "output_tokens": out, "cache_read_tokens": cr,
         "cache_creation_tokens": cc, "reasoning_tokens": 0,
@@ -64,6 +65,22 @@ def test_priced_model_costs_are_cache_aware(tmp_path: Path, monkeypatch) -> None
     assert row["usd_writes"] == 6.25  # 1M * $5 * 1.25
     assert row["usd"] == 36.75        # + $5 raw input
     assert row["unpriced_turns"] == 0
+
+
+def test_usage_repeated_on_each_block_of_a_request_is_billed_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
+        # Claude Code writes a thinking line and a text line for one response,
+        # each carrying the same usage object.
+        _ingest(store, "s1", [
+            _turn("s1", i, "claude-opus-5", out=1_000_000, request_id="req_1")
+            for i in range(2)
+        ])
+        row = _by_group(_cmd_cost(store, _args()))["claude-opus-5"]
+    assert row["turns"] == 1
+    assert row["usd_output"] == 25.0  # one request, not two
 
 
 def test_zero_token_placeholder_turns_are_not_flagged_unpriced(

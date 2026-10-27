@@ -24,6 +24,14 @@ def test_defaults_price_known_models_and_leave_others_unpriced(tmp_path: Path) -
     assert book.for_model(None) is None
 
 
+def test_point_releases_do_not_inherit_the_family_rate(tmp_path: Path) -> None:
+    book = load_prices(tmp_path / "missing.toml")
+    opus = book.for_model("claude-opus-5-5")
+    assert (opus.input, opus.output) == (4.0, 20.0)
+    assert opus.cache_read == pytest.approx(0.20)
+    assert book.for_model("claude-haiku-5-5") == Price(0.10, 0.50)
+
+
 def test_config_adds_and_overrides_models(tmp_path: Path) -> None:
     book = load_prices(_config(tmp_path, """
 [pricing]

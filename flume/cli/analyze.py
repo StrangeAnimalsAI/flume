@@ -482,8 +482,10 @@ def _parse_when(value: str | None) -> int | None:
 
 
 def _cmd_cost(store, args) -> list[dict[str, Any]]:
-    # Cost is derived, not stored: price per-turn token splits at the turn's
-    # own model rates (or --as-model rates for what-if).
+    # Cost is derived, not stored: price per-request token splits at the
+    # request's own model rates (or --as-model rates for what-if). Reads
+    # turn_requests, not turns: Claude Code repeats one request's usage on
+    # every content block, so summing turns bills it about twice.
 
     require_sql(store, "cost")
     since_ns = _since_ns(args.since)
@@ -507,7 +509,7 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         SELECT {group_expr} AS grp, t.model AS model, COUNT(*) turns,
             SUM(t.input_tokens) i, SUM(t.output_tokens) o,
             SUM(t.cache_read_tokens) cr, SUM(t.cache_creation_tokens) cc
-        FROM turns t JOIN sessions s USING (session_id)
+        FROM turn_requests t JOIN sessions s USING (session_id)
         {where} GROUP BY {group_expr}, t.model
         """,
         tuple(params),

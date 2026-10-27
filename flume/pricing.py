@@ -67,8 +67,10 @@ class Price:
 
 
 # Anthropic list rates, verified 2026-07-24 against the published pricing
-# table. Keys are matched as prefixes, so a dated snapshot id like
-# `claude-haiku-4-5-20251001` resolves through its family key.
+# table (the 5.5 models on 2026-10-26). Keys are matched as prefixes, so a
+# dated snapshot id like `claude-haiku-4-5-20251001` resolves through its
+# family key — and a point release like `claude-opus-5-5` needs its own
+# entry, or it inherits `claude-opus-5`'s rates.
 #
 # Rates go stale. Anything wrong or missing here is a one-line config fix
 # on the user's side — do not edit this table to price another vendor's
@@ -76,15 +78,21 @@ class Price:
 _DEFAULTS: dict[str, Price] = {
     "claude-fable-5": Price(10.0, 50.0),
     "claude-mythos-5": Price(10.0, 50.0),
+    # Opus 5.5 cache reads are $0.20/MTok: 0.05x input, not the usual 0.1x.
+    "claude-opus-5-5": Price(4.0, 20.0, cache_read_multiplier=0.05),
     "claude-opus-5": Price(5.0, 25.0),
     "claude-opus-4-8": Price(5.0, 25.0),
     "claude-opus-4-7": Price(5.0, 25.0),
     "claude-opus-4-6": Price(5.0, 25.0),
     "claude-opus-4-5": Price(5.0, 25.0),
     # Sonnet 5 introductory pricing runs through 2026-08-31; list is $3/$15.
+    "claude-sonnet-5-5": Price(2.0, 10.0),
     "claude-sonnet-5": Price(2.0, 10.0),
     "claude-sonnet-4-6": Price(3.0, 15.0),
     "claude-sonnet-4-5": Price(3.0, 15.0),
+    # Prompts over 100K tokens bill at $0.50/$2.50; flume prices every
+    # Haiku 5.5 request at the short-prompt rate.
+    "claude-haiku-5-5": Price(0.10, 0.50),
     "claude-haiku-4-5": Price(1.0, 5.0),
 }
 
