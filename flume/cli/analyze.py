@@ -11,6 +11,7 @@ Examples:
     flume analyze thinking <session-id>
     flume analyze tools --since 7d
     flume analyze tokens --group-by model
+    flume analyze cost --since 7d --model claude
     flume analyze search "navigat* codebase" --kind thinking
     flume analyze ingest --source claude-code --path ~/.claude/projects
     flume analyze experiment start docnav-all --hypothesis "..."
@@ -207,6 +208,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--group-by", default="model", choices=("model", "day", "project", "session")
+    )
+    p.add_argument(
+        "--model",
+        default=None,
+        help="Only models starting with this prefix (e.g. claude); shares are "
+        "then of that subset.",
     )
     p.add_argument(
         "--as-model",
@@ -503,6 +510,10 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
     if since_ns is not None:
         clauses.append("s.started_at_ns >= ?")
         params.append(since_ns)
+    if args.model:
+        # substr, not LIKE: model ids can carry `_`, a LIKE wildcard.
+        clauses.append("substr(t.model, 1, ?) = ?")
+        params.extend((len(args.model), args.model))
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = store.rows(
         f"""
@@ -529,9 +540,14 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         bucket = buckets.setdefault(
             row["grp"] or "?",
             {"group": row["grp"], "turns": 0, "usd": 0.0, "usd_reads": 0.0,
-             "usd_writes": 0.0, "usd_output": 0.0, "unpriced_turns": 0},
+             "usd_writes": 0.0, "usd_output": 0.0, "unpriced_turns": 0,
+             "premium_turns": 0, "premium_usd": 0.0},
         )
         bucket["turns"] += row["turns"]
+        # Premium is the model that ran, not the --as-model repricing.
+        premium = book.is_premium(row["model"])
+        if premium:
+            bucket["premium_turns"] += row["turns"]
         if price is None:
             # Only count turns that actually consumed tokens. Sources record
             # placeholder turns with no usage — Claude Code writes
@@ -549,11 +565,21 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         bucket["usd_writes"] += writes
         bucket["usd_output"] += output
         bucket["usd"] += reads + writes + output + raw
+        if premium:
+            bucket["premium_usd"] += reads + writes + output + raw
     out = sorted(buckets.values(), key=lambda b: -b["usd"])
+    total_turns = sum(b["turns"] for b in out)
+    total_usd = sum(b["usd"] for b in out)
     for bucket in out:
-        for key in ("usd", "usd_reads", "usd_writes", "usd_output"):
+        bucket["pct_turns"] = _pct(bucket["turns"], total_turns)
+        bucket["pct_usd"] = _pct(bucket["usd"], total_usd)
+        for key in ("usd", "usd_reads", "usd_writes", "usd_output", "premium_usd"):
             bucket[key] = round(bucket[key], 2)
     return out
+
+
+def _pct(part: float, whole: float) -> float:
+    return round(100 * part / whole, 1) if whole else 0.0
 
 
 def _cmd_audit_repeats(store, args) -> list[dict[str, Any]]:
@@ -964,7 +990,9 @@ def _render(command: str | None, result: Any) -> None:
                 {
                     "group": r["group"],
                     "turns": r["turns"],
+                    "%turns": f"{r['pct_turns']:.1f}%",
                     "$total": f"${r['usd']:,.2f}",
+                    "%cost": f"{r['pct_usd']:.1f}%",
                     "$reads": f"${r['usd_reads']:,.2f}",
                     "$writes": f"${r['usd_writes']:,.2f}",
                     "$output": f"${r['usd_output']:,.2f}",
@@ -974,7 +1002,14 @@ def _render(command: str | None, result: Any) -> None:
             ]
         )
         total = sum(r["usd"] for r in result)
+        turns = sum(r["turns"] for r in result)
+        premium_turns = _pct(sum(r["premium_turns"] for r in result), turns)
+        premium_usd = _pct(sum(r["premium_usd"] for r in result), total)
         print(f"\n  TOTAL: ${total:,.2f}")
+        print(
+            f"  premium models: {premium_turns:.1f}% of turns, "
+            f"{premium_usd:.1f}% of cost"
+        )
         return
     if command == "search":
         for row in result:

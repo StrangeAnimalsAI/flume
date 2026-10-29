@@ -19,8 +19,8 @@ BASE_NS = 1_780_000_000 * 1_000_000_000
 
 
 def _args(**over):
-    base = {"since": None, "source": None, "group_by": "model", "as_model": None,
-            "json": True, "analyzed_store_url": None}
+    base = {"since": None, "source": None, "group_by": "model", "model": None,
+            "as_model": None, "json": True, "analyzed_store_url": None}
     base.update(over)
     return argparse.Namespace(**base)
 
@@ -114,3 +114,52 @@ def test_config_pricing_makes_a_model_costable(tmp_path: Path, monkeypatch) -> N
         row = _by_group(_cmd_cost(store, _args()))["local-x"]
     assert row["unpriced_turns"] == 0
     assert row["usd"] == 10.0  # $2 input + $8 output
+
+
+def _mixed(store):
+    # opus-5: $25/MTok output (premium); haiku-4-5: $5 (not); gpt-x unpriced.
+    _ingest(store, "s1", [
+        _turn("s1", 0, "claude-opus-5", out=1_000_000),
+        _turn("s1", 1, "claude-haiku-4-5", out=1_000_000),
+        _turn("s1", 2, "claude-haiku-4-5", out=1_000_000),
+        _turn("s1", 3, "gpt-x", out=1_000_000),
+    ])
+
+
+def test_rows_carry_their_share_of_turns_and_cost(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
+        _mixed(store)
+        rows = _by_group(_cmd_cost(store, _args()))
+    assert rows["claude-opus-5"]["pct_turns"] == 25.0
+    assert rows["claude-haiku-4-5"]["pct_turns"] == 50.0
+    assert rows["claude-opus-5"]["pct_usd"] == 71.4   # $25 of $35
+    assert rows["claude-haiku-4-5"]["pct_usd"] == 28.6
+    assert rows["gpt-x"]["pct_usd"] == 0.0
+
+
+def test_model_prefix_restricts_the_subset_shares_are_of(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
+        _mixed(store)
+        rows = _by_group(_cmd_cost(store, _args(model="claude")))
+    assert set(rows) == {"claude-opus-5", "claude-haiku-4-5"}
+    assert rows["claude-opus-5"]["pct_turns"] == 33.3
+    assert rows["claude-haiku-4-5"]["pct_turns"] == 66.7
+
+
+def test_premium_split_follows_the_model_that_ran(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
+        _mixed(store)
+        [day] = _cmd_cost(store, _args(group_by="day"))
+        # Repricing everything at opus rates must not make haiku premium.
+        [repriced] = _cmd_cost(
+            store, _args(group_by="day", as_model="claude-opus-5")
+        )
+    assert day["premium_turns"] == 1
+    assert day["premium_usd"] == 25.0
+    assert repriced["premium_turns"] == 1
+    assert repriced["premium_usd"] == 25.0
