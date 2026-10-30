@@ -508,7 +508,9 @@ def _cmd_cost(store, args) -> list[dict[str, Any]]:
         clauses.append("s.source = ?")
         params.append(args.source)
     if since_ns is not None:
-        clauses.append("s.started_at_ns >= ?")
+        # Turn time, not session start: a session opened eight days ago
+        # still spent money today, and that spend belongs in a 7d window.
+        clauses.append("t.started_at_ns >= ?")
         params.append(since_ns)
     if args.model:
         # substr, not LIKE: model ids can carry `_`, a LIKE wildcard.

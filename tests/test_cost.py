@@ -9,6 +9,7 @@ there was nothing to price.
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from flume.cli.analyze import _cmd_cost
@@ -25,22 +26,23 @@ def _args(**over):
     return argparse.Namespace(**base)
 
 
-def _turn(session_id, index, model, *, inp=0, out=0, cr=0, cc=0, request_id=None):
+def _turn(session_id, index, model, *, inp=0, out=0, cr=0, cc=0, request_id=None,
+          at=BASE_NS):
     return {
         "span_id": f"{session_id}-t{index}", "turn_index": index, "model": model,
         "request_id": request_id,
-        "started_at_ns": BASE_NS, "ended_at_ns": BASE_NS, "duration_ms": 0,
+        "started_at_ns": at, "ended_at_ns": at, "duration_ms": 0,
         "input_tokens": inp, "output_tokens": out, "cache_read_tokens": cr,
         "cache_creation_tokens": cc, "reasoning_tokens": 0,
         "thinking_chars": 0, "text_chars": 0,
     }
 
 
-def _ingest(store, session_id, turns):
+def _ingest(store, session_id, turns, *, started=BASE_NS):
     store.ingest_session(SessionBundle(
         session={
             "session_id": session_id, "source": "claude-code", "is_subagent": 0,
-            "started_at_ns": BASE_NS, "ended_at_ns": BASE_NS + 10**9,
+            "started_at_ns": started, "ended_at_ns": started + 10**9,
             "turn_count": len(turns), "tool_call_count": 0,
             "pipeline_version": 1, "ingested_at_ns": BASE_NS,
         },
@@ -163,3 +165,20 @@ def test_premium_split_follows_the_model_that_ran(tmp_path: Path, monkeypatch) -
     assert day["premium_usd"] == 25.0
     assert repriced["premium_turns"] == 1
     assert repriced["premium_usd"] == 25.0
+
+
+def test_since_counts_recent_turns_of_a_session_that_started_earlier(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("FLUME_CONFIG", str(tmp_path / "absent.toml"))
+    day = 86_400 * 10**9
+    now = time.time_ns()
+    with SqliteAnalyzedStore(tmp_path / "s.sqlite3") as store:
+        # Opened eight days ago, still working yesterday.
+        _ingest(store, "s1", [
+            _turn("s1", 0, "claude-opus-5", out=1_000_000, at=now - 8 * day),
+            _turn("s1", 1, "claude-opus-5", out=1_000_000, at=now - day),
+        ], started=now - 8 * day)
+        row = _by_group(_cmd_cost(store, _args(since="7d")))["claude-opus-5"]
+    assert row["turns"] == 1
+    assert row["usd"] == 25.0
